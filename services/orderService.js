@@ -30,8 +30,10 @@ class OrderService {
 
       // DB에서 직접 샵 정보를 조회
       const query = `
-        SELECT * FROM public.shopee_shop
-        WHERE id = $1 AND deleted IS NULL
+        SELECT ss.*, cp.id as platform_id, cp.companyid 
+        FROM public.shopee_shop ss
+        JOIN public.company_platform cp ON ss.platform_id = cp.id
+        WHERE ss.id = $1 AND ss.deleted IS NULL AND cp.isactive = true
       `;
       
       let validShop;
@@ -46,6 +48,9 @@ class OrderService {
         logger.error(`샵 ID ${shop.shop_id}의 유효한 토큰 없음`);
         return { success: false, error: '유효한 토큰 없음' };
       }
+      
+      // company_id 확인 (디버깅용)
+      logger.debug(`샵 ID ${shop.shop_id}의 company_id: ${validShop.companyid}`);
 
       // 샵의 주문 수집 단위(분) 확인
       //const minutesToCollect = validShop.order_update_minute || 60;
@@ -159,6 +164,16 @@ class OrderService {
     // 배치 단위로 처리 (API 제한 고려)
     const batchSize = 50;
     
+    // shop 객체에서 이미 조회된 company_id 사용
+    const companyId = shop.companyid;
+    
+    if (!companyId) {
+      logger.error(`샵 ID ${shop.id}의 company_id가 없습니다.`);
+      throw new Error(`company_id 정보 없음`);
+    }
+    
+    logger.debug(`샵 ID ${shop.id}의 company_id: ${companyId} 사용`);
+    
     for (let i = 0; i < orderSns.length; i += batchSize) {
       const batchOrderSns = orderSns.slice(i, i + batchSize);
       
@@ -216,9 +231,16 @@ class OrderService {
                 hasShipping: shipmentMap[orderSn] ? true : false
               });
               
+              // 송장번호 확인 로그 추가
+              if (shipmentMap[orderSn] && shipmentMap[orderSn].tracking_number) {
+                logger.info(`주문 ${orderSn} 저장 전 송장번호 확인: ${shipmentMap[orderSn].tracking_number}`);
+              } else {
+                logger.warn(`주문 ${orderSn}의 송장번호 정보 없음`);
+              }
+              
               try {
-                // 주문 저장 (중복인 경우 업데이트)
-                const savedOrder = await orderRepository.upsertOrder(formattedOrder, shop.platform_id, shop.id, tx);
+                // 주문 저장 (중복인 경우 업데이트) - company_id는 company_platform 테이블에서 조회한 값 사용
+                const savedOrder = await orderRepository.upsertOrder(formattedOrder, companyId, shop.shop_id, tx);
                 
                 if (savedOrder && savedOrder.orderId) {
                   stats.success++;
@@ -279,6 +301,8 @@ class OrderService {
     let hasMore = true;
     let cursor = "";
     let totalShipments = 0;
+    const batchSize = 50; // API 호출 최적화를 위한 배치 크기
+    const orderSnBatches = []; // 배치 처리를 위한 주문번호 배열
     
     // 모든 페이지의 배송 정보 조회
     while (hasMore) {
@@ -300,7 +324,7 @@ class OrderService {
           const shipmentOrders = shipmentResponse.response.order_list;
           totalShipments += shipmentOrders.length;
           
-          // 배송 정보 매핑 생성
+          // 기본 배송 정보 매핑 생성
           for (const shipmentOrder of shipmentOrders) {
             // 물류 추적 정보 기본값 설정
             shipmentMap[shipmentOrder.order_sn] = {
@@ -308,35 +332,18 @@ class OrderService {
               shipping_carrier: null,
               shipping_carrier_name: null,
               estimated_shipping_fee: 0,
-              actual_shipping_cost: 0
+              actual_shipping_cost: 0,
+              histories: []
             };
             
-            try {
-              // 개별 주문에 대한 물류 추적 정보 추가 조회
-              const trackingResponse = await shopeeApi.getTrackingInfo(
-                shop.access_token,
-                shop.shop_id,
-                shipmentOrder.order_sn
-              );
-              
-              if (trackingResponse.response && trackingResponse.response.tracking_info) {
-                const trackingInfo = trackingResponse.response.tracking_info;
-                // 추적 정보로 업데이트
-                shipmentMap[shipmentOrder.order_sn] = {
-                  tracking_number: trackingInfo.tracking_number || shipmentOrder.package_number,
-                  shipping_carrier: trackingInfo.logistics_channel_id || null,
-                  shipping_carrier_name: trackingInfo.logistics_channel_name || null,
-                  estimated_shipping_fee: trackingInfo.estimated_shipping_fee || 0,
-                  actual_shipping_cost: 0
-                };
-              }
-            } catch (trackingError) {
-              logger.warn(`샵 ID ${shop.shop_id}의 주문 ${shipmentOrder.order_sn} 물류 추적 정보 조회 실패: ${trackingError.message}`);
-              // 기본값 유지
-            }
-            
-            // API 제한 고려 대기
-            await new Promise(resolve => setTimeout(resolve, 200));
+            // 배치 처리를 위해 주문번호 저장
+            orderSnBatches.push(shipmentOrder.order_sn);
+          }
+          
+          // 배치 크기 단위로 대량 추적 정보 가져오기
+          if (orderSnBatches.length >= batchSize || !shipmentResponse.response.more) {
+            await this._processTrackingInfoBatch(shop, orderSnBatches, shipmentMap);
+            orderSnBatches.length = 0; // 배열 비우기
           }
         }
         
@@ -352,8 +359,132 @@ class OrderService {
       }
     }
     
+    // 남은 주문에 대한 추적 정보 처리
+    if (orderSnBatches.length > 0) {
+      await this._processTrackingInfoBatch(shop, orderSnBatches, shipmentMap);
+    }
+    
     logger.info(`샵 ID ${shop.shop_id}의 배송 정보 총 ${totalShipments}개 조회 완료`);
     return shipmentMap;
+  }
+  
+  /**
+   * 배치 방식으로 주문 추적 정보 처리
+   * @private
+   * @param {Object} shop - 샵 정보
+   * @param {Array} orderSns - 주문번호 배열
+   * @param {Object} shipmentMap - 배송 정보 맵 (참조로 전달)
+   */
+  async _processTrackingInfoBatch(shop, orderSns, shipmentMap) {
+    if (orderSns.length === 0) return;
+    
+    logger.debug(`샵 ID ${shop.shop_id}의 주문 ${orderSns.length}개에 대한 대량 추적 정보 조회 시작`);
+    
+    try {
+      // 대량 추적 정보 조회 (배치 처리)
+      const batchOrderSns = [...orderSns]; // 복사본 생성
+      const massTrackingResponse = await shopeeApi.getMassTrackingInfo(
+        shop.access_token,
+        shop.shop_id,
+        batchOrderSns
+      );
+      
+      if (massTrackingResponse.response && 
+          massTrackingResponse.response.response && 
+          massTrackingResponse.response.response.tracking_list) {
+        
+        const trackingList = massTrackingResponse.response.response.tracking_list;
+        logger.info(`샵 ID ${shop.shop_id}의 대량 추적 정보 ${trackingList.length}개 조회 성공`);
+        
+        // 각 추적 정보 처리
+        for (const trackingInfo of trackingList) {
+          if (!trackingInfo.order_sn || !shipmentMap[trackingInfo.order_sn]) continue;
+          
+          // 배송 정보 업데이트
+          shipmentMap[trackingInfo.order_sn] = {
+            ...shipmentMap[trackingInfo.order_sn],
+            tracking_number: trackingInfo.tracking_number || shipmentMap[trackingInfo.order_sn].tracking_number,
+            shipping_carrier: trackingInfo.logistics_channel_id || shipmentMap[trackingInfo.order_sn].shipping_carrier,
+            shipping_carrier_name: trackingInfo.logistics_channel_name || shipmentMap[trackingInfo.order_sn].shipping_carrier_name
+          };
+          
+          // 송장번호 로그 추가
+          logger.info(`송장번호 업데이트: 주문 ${trackingInfo.order_sn}, 송장번호: ${shipmentMap[trackingInfo.order_sn].tracking_number}`);
+          
+          // 추적 번호가 있는 경우에만 상세 정보 조회
+          if (trackingInfo.tracking_number) {
+            const trackingNumber = trackingInfo.tracking_number;
+            try {
+              // 상세 배송 추적 정보 조회
+              const detailedResponse = await shopeeApi.getDetailedTrackingInfo(
+                shop.access_token,
+                shop.shop_id,
+                trackingNumber
+              );
+              
+              if (detailedResponse.response && 
+                  detailedResponse.response.response && 
+                  detailedResponse.response.response.tracking_info) {
+                
+                const detailedInfo = detailedResponse.response.response;
+                
+                // 배송 이력 정보 추출
+                if (detailedInfo.tracking_info && detailedInfo.tracking_info.length > 0) {
+                  shipmentMap[trackingInfo.order_sn].histories = detailedInfo.tracking_info.map(info => ({
+                    tracking_no: trackingNumber,
+                    tracking_date: info.update_time || Math.floor(Date.now() / 1000),
+                    status: info.logistics_status || 'UNKNOWN',
+                    location: info.description || 'Unknown'
+                  }));
+                }
+              }
+              
+              // API 호출 제한 고려 (0.2초 대기)
+              await new Promise(resolve => setTimeout(resolve, 200));
+            } catch (detailError) {
+              logger.warn(`샵 ID ${shop.shop_id}의 주문 ${trackingInfo.order_sn} 상세 추적 정보 조회 실패: ${detailError.message}`);
+            }
+          }
+        }
+      } else {
+        logger.warn(`샵 ID ${shop.shop_id}의 대량 추적 정보 응답 없음`);
+      }
+    } catch (batchError) {
+      logger.error(`샵 ID ${shop.shop_id}의 대량 추적 정보 조회 실패: ${batchError.message}`);
+      
+      // 배치 처리 실패 시 개별 처리 시도
+      logger.info(`샵 ID ${shop.shop_id}의 개별 추적 정보 조회로 대체 시도`);
+      
+      for (const orderSn of orderSns) {
+        if (!shipmentMap[orderSn]) continue;
+        
+        try {
+          // 개별 주문에 대한 물류 추적 정보 조회
+          const trackingResponse = await shopeeApi.getTrackingInfo(
+            shop.access_token,
+            shop.shop_id,
+            orderSn
+          );
+          
+          if (trackingResponse.response && trackingResponse.response.response) {
+            const trackingInfo = trackingResponse.response.response;
+            
+            // 추적 정보 업데이트
+            shipmentMap[orderSn] = {
+              ...shipmentMap[orderSn],
+              tracking_number: trackingInfo.tracking_number || shipmentMap[orderSn].tracking_number,
+              shipping_carrier: trackingInfo.logistics_channel_id || shipmentMap[orderSn].shipping_carrier,
+              shipping_carrier_name: trackingInfo.logistics_channel_name || shipmentMap[orderSn].shipping_carrier_name
+            };
+          }
+          
+          // API 호출 제한 고려 (0.2초 대기)
+          await new Promise(resolve => setTimeout(resolve, 200));
+        } catch (singleError) {
+          logger.warn(`샵 ID ${shop.shop_id}의 주문 ${orderSn} 개별 추적 정보 조회 실패: ${singleError.message}`);
+        }
+      }
+    }
   }
 }
 

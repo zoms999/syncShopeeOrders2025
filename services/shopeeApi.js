@@ -281,9 +281,42 @@ class ShopeeApi {
   async getTrackingInfo(accessToken, shopId, orderSn) {
     logger.info(`물류 추적 정보 조회 요청 - 샵 ID: ${shopId}, 주문번호: ${orderSn}`);
     
-    // 물류 추적 정보 조회 (GET 메서드)
-    return await this._callApi('/logistics/tracking_number/get_mass', {
+    // /logistics/tracking_number/get_mass 대신 올바른 엔드포인트 사용
+    // 단일 주문의 추적 번호 조회
+    return await this._callApi('/logistics/get_tracking_number', {
       order_sn: orderSn
+    }, accessToken, shopId, 'GET');
+  }
+  
+  /**
+   * 주문 추적 상세 정보 가져오기
+   * @param {string} accessToken - 액세스 토큰
+   * @param {string} shopId - 샵 ID
+   * @param {string} trackingNumber - 추적 번호
+   * @returns {Promise<Object>} - 추적 상세 정보
+   */
+  async getDetailedTrackingInfo(accessToken, shopId, trackingNumber) {
+    logger.info(`물류 추적 상세 정보 조회 요청 - 샵 ID: ${shopId}, 추적번호: ${trackingNumber}`);
+    
+    // 추적 상세 정보 조회
+    return await this._callApi('/logistics/get_tracking_info', {
+      tracking_number: trackingNumber
+    }, accessToken, shopId, 'GET');
+  }
+  
+  /**
+   * 대량 주문 물류 추적 정보 가져오기
+   * @param {string} accessToken - 액세스 토큰
+   * @param {string} shopId - 샵 ID
+   * @param {Array} orderSns - 주문번호 배열
+   * @returns {Promise<Object>} - 대량 물류 추적 정보
+   */
+  async getMassTrackingInfo(accessToken, shopId, orderSns) {
+    logger.info(`대량 물류 추적 정보 조회 요청 - 샵 ID: ${shopId}, 주문 수: ${orderSns.length}`);
+    
+    // 대량 추적 정보 조회
+    return await this._callApi('/logistics/get_mass_tracking_number', {
+      order_sn_list: orderSns.join(',')
     }, accessToken, shopId, 'GET');
   }
   

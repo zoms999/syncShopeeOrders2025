@@ -219,6 +219,10 @@ class OrderRepository {
     try {
       const result = await dbOrTx.one(query, params);
       logger.debug(`배송 정보 저장 성공 (ID: ${result.id})`);
+      
+      // 송장번호 저장 확인 로그 추가
+      logger.info(`배송 정보 저장 완료 - 주문 ID: ${orderId}, 송장번호: ${logisticData.tracking_number || '없음'}`);
+      
       return result.id;
     } catch (error) {
       logger.error(`배송 정보 저장 실패 (주문 ID: ${orderId}):`, error);
@@ -394,7 +398,7 @@ class OrderRepository {
         orderId,
         logisticId,
         tomsItemId, // 임시 UUID 사용 (NOT NULL 제약조건 충족)
-        companyId,
+        companyId, // company_platform 테이블의 companyid 값
         item.image_url || null
       ];
       
