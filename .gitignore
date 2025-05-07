@@ -1,0 +1,29 @@
+# 의존성 관련
+/node_modules
+/package-lock.json
+
+# 로그 파일
+/logs
+*.log
+npm-debug.log*
+
+# 환경 설정 파일
+.env
+.env.local
+.env.development.local
+.env.test.local
+.env.production.local
+
+# 운영체제 관련 파일
+.DS_Store
+Thumbs.db
+
+# 에디터 관련 파일
+/.idea
+/.vscode
+*.swp
+*.swo
+
+# 임시 파일 및 기타
+/tmp
+/temp 
