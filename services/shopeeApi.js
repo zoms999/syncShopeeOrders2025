@@ -3,6 +3,7 @@ const crypto = require('crypto');
 const config = require('../config/config');
 const logger = require('../utils/logger');
 const shopRepository = require('../db/shopRepository');
+const { v4: uuidv4 } = require('uuid');
 
 class ShopeeApi {
   constructor() {
@@ -60,11 +61,13 @@ class ShopeeApi {
    * API 호출 공통 메서드
    * @param {string} path - API 경로
    * @param {Object} params - 요청 파라미터
-   * @param {string} [method='GET'] - HTTP 메서드
+   * @param {string} accessToken - 액세스 토큰
+   * @param {string|number} shopId - 샵 ID
+   * @param {string} method - HTTP 메서드 (GET/POST)
    * @returns {Promise<Object>} - API 응답
    * @private
    */
-  async _callApi(path, params, method = 'GET') {
+  async _callApi(path, params, accessToken, shopId, method = 'GET') {
     try {
       // 기본 설정된 API 기본 URL 사용
       const baseUrl = this.baseUrl;
@@ -74,20 +77,18 @@ class ShopeeApi {
       const fullUrl = `${baseUrl}${apiPath}`;
       
       // 요청 타임아웃 설정
-      const apiTimeout = 20000; // 20초 타임아웃 (충분한 여유)
+      const apiTimeout = 30000; // 30초 타임아웃 (충분한 여유)
       
-      // 공통 파라미터 추가
-      const timestamp = params.timestamp || this._getTimestamp();
-      const shopId = params.shop_id || '';
-      
-      // API 서명 생성
-      const signature = this._generateSignature(apiPath, timestamp, params.access_token || '', shopId ? String(shopId) : '');
+      // 타임스탬프 생성
+      const timestamp = this._getTimestamp();
       
       // 공통 파라미터 설정
       const commonParams = {
         partner_id: parseInt(this.partnerId, 10),
         timestamp,
-        sign: signature
+        access_token: accessToken,
+        shop_id: shopId,
+        sign: this._generateSignature(apiPath, timestamp, accessToken, shopId)
       };
       
       // 최종 파라미터 구성
@@ -96,7 +97,7 @@ class ShopeeApi {
         ...params
       };
       
-      // 로깅 개선: 요청 URL 및 파라미터만 로깅 (민감한 정보 제외)
+      // 로깅 개선: 민감한 정보 제외
       const logParams = { ...finalParams };
       if (logParams.access_token) {
         logParams.access_token = `${logParams.access_token.substring(0, 10)}...`;
@@ -117,9 +118,9 @@ class ShopeeApi {
       // GET 요청은 params로 전달
       if (method === 'GET') {
         config.params = finalParams;
-      } else { // POST 요청은 data로 전달
+      } else { // POST 요청은 data로 전달, 공통 파라미터는 URL 쿼리로 전달
         config.data = params;
-        config.params = commonParams; // 공통 파라미터는 URL 쿼리로 전달
+        config.params = commonParams;
       }
       
       // API 요청
@@ -130,9 +131,13 @@ class ShopeeApi {
       
       return response.data;
     } catch (error) {
-      // 타임아웃, 네트워크 오류 등 상세 로깅
+      // 상세 오류 처리 및 로깅
       if (error.code === 'ECONNABORTED') {
         logger.error(`API 요청 타임아웃: ${path}`);
+        throw new Error(`API 요청 타임아웃: ${path}`);
+      } else if (error.code === 'ECONNRESET') {
+        logger.error(`API 호출 중 네트워크 오류: socket hang up`);
+        throw new Error(`API 호출 중 네트워크 오류: socket hang up`);
       } else if (error.response) {
         logger.error(`API 오류 응답 (${path}):`, {
           status: error.response.status,
@@ -210,7 +215,7 @@ class ShopeeApi {
     logger.info(`주문 목록 조회 요청 - 샵 ID: ${shopId}, 시간범위: ${requestParams.time_from} ~ ${requestParams.time_to}`);
     
     // get_order_list는 GET 메서드로 호출
-    return await this._callApi('/order/get_order_list', requestParams, 'GET');
+    return await this._callApi('/order/get_order_list', requestParams, accessToken, shopId, 'GET');
   }
   
   /**
@@ -240,7 +245,7 @@ class ShopeeApi {
         'invoice_data', 'checkout_shipping_carrier', 'reverse_shipping_fee',
         'order_chargeable_weight', 'order_remark'
       ].join(',')
-    }, 'GET');
+    }, accessToken, shopId, 'GET');
   }
   
   /**
@@ -260,7 +265,7 @@ class ShopeeApi {
       shop_id: shopId,
       page_size: 100,  // 최대 결과 개수
       cursor: cursor
-    }, 'GET');
+    }, accessToken, shopId, 'GET');
   }
   
   /**
@@ -279,57 +284,33 @@ class ShopeeApi {
         logger.info(`[디버그] ${orderSn} 송장번호 조회 API 시작 - 패키지번호: ${packageNumber || 'N/A'}`);
       }
       
+      // 정확한 API 경로 사용
       const path = '/api/v2/logistics/get_tracking_number';
-      const timestamp = Math.floor(Date.now() / 1000);
       
-      // 기본 쿼리 파라미터 설정
+      // API 문서에 맞게 요청 파라미터 구성
       const params = {
         access_token: accessToken,
         shop_id: shopId,
         order_sn: orderSn,
-        timestamp: timestamp
+        response_optional_fields: "plp_number,first_mile_tracking_number,last_mile_tracking_number"
       };
       
-      // 패키지 번호가 있는 경우에만 추가 (C# 코드와 유사하게 처리)
+      // 패키지 번호가 있는 경우에만 추가
       if (packageNumber) {
         params.package_number = packageNumber;
       }
-      
-      // 추가 필드 요청 (C# 코드와 동일하게 처리)
-      params.response_optional_fields = 'plp_number,first_mile_tracking_number,last_mile_tracking_number';
       
       // 디버그 로그 추가
       if (isSpecificOrder) {
         logger.info(`[디버그] ${orderSn} API 요청 파라미터:`, JSON.stringify(params));
       }
       
-      // API 호출 및 결과 반환
-      const response = await this._callApi(path, params);
+      // API 호출 (GET 메서드 사용)
+      const response = await this._callApi(path, params, accessToken, shopId, 'GET');
       
       // 특정 주문번호에 대한 응답 상세 로깅
       if (isSpecificOrder) {
         logger.info(`[디버그] ${orderSn} API 응답:`, JSON.stringify(response));
-        
-        // 응답 구조 확인
-        const hasResponse = response && response.response;
-        const hasTrackingNumber = hasResponse && response.response.tracking_number;
-        logger.info(`[디버그] ${orderSn} 응답 구조 확인 - 응답 있음: ${hasResponse}, 송장번호 있음: ${hasTrackingNumber}`);
-        
-        if (hasResponse) {
-          // 쇼피 API 응답에 에러 코드가 있는지 확인
-          const errorCode = response.error;
-          const errorMsg = response.message || '';
-          if (errorCode) {
-            logger.error(`[디버그] ${orderSn} API 에러 - 코드: ${errorCode}, 메시지: ${errorMsg}`);
-          }
-          
-          // 송장번호가 있으면 확인
-          if (hasTrackingNumber) {
-            logger.info(`[디버그] ${orderSn} 송장번호 확인: ${response.response.tracking_number}`);
-          } else {
-            logger.warn(`[디버그] ${orderSn} 송장번호 없음 (API 응답에 tracking_number 필드 없음)`);
-          }
-        }
       }
       
       return response;
@@ -354,25 +335,74 @@ class ShopeeApi {
       access_token: accessToken,
       shop_id: shopId,
       tracking_number: trackingNumber
-    }, 'GET');
+    }, accessToken, shopId, 'GET');
   }
   
   /**
-   * 대량 주문 물류 추적 정보 가져오기
+   * 대량 물류 추적 정보 가져오기 (v2.logistics.get_mass_tracking_number)
    * @param {string} accessToken - 액세스 토큰
    * @param {string} shopId - 샵 ID
    * @param {Array} orderSns - 주문번호 배열
    * @returns {Promise<Object>} - 대량 물류 추적 정보
    */
-  async getMassTrackingInfo(accessToken, shopId, orderSns) {
-    logger.info(`대량 물류 추적 정보 조회 요청 - 샵 ID: ${shopId}, 주문 수: ${orderSns.length}`);
+  async getMassTrackingInfo(accessToken, shopId, packageNumbers) {
+    logger.info(`대량 물류 추적 정보 조회 요청 - 샵 ID: ${shopId}, 패키지 수: ${packageNumbers.length}`);
     
-    // 대량 추적 정보 조회
-    return await this._callApi('/logistics/get_mass_tracking_number', {
-      access_token: accessToken,
-      shop_id: shopId,
-      order_sn_list: orderSns.join(',')
-    }, 'GET');
+    // 단일 주문 추적 정보를 여러번 호출하는 방식으로 변경 (안정성 확보)
+    const results = {
+      success_list: [],
+      fail_list: []
+    };
+    
+    // 순차적으로 처리
+    for (const packageNumber of packageNumbers) {
+      try {
+        // 개별 주문에 대한 추적 정보 조회
+        const response = await this.getTrackingInfo(
+          accessToken,
+          shopId,
+          null, // order_sn은 필요 없음
+          packageNumber
+        );
+        
+        // 정상 응답인 경우
+        if (response && response.response && response.response.tracking_number) {
+          results.success_list.push({
+            package_number: packageNumber,
+            tracking_number: response.response.tracking_number,
+            first_mile_tracking_number: response.response.first_mile_tracking_number || '',
+            last_mile_tracking_number: response.response.last_mile_tracking_number || '',
+            plp_number: response.response.plp_number || '',
+            hint: response.response.hint || ''
+          });
+        } else {
+          // 실패 케이스
+          results.fail_list.push({
+            package_number: packageNumber,
+            fail_reason: (response.error && response.message) ? `${response.error}: ${response.message}` : '송장번호를 찾을 수 없음'
+          });
+        }
+        
+        // API 제한 고려 - 요청 간 지연
+        await new Promise(resolve => setTimeout(resolve, 500));
+      } catch (error) {
+        // 오류 발생 시 실패 목록에 추가
+        results.fail_list.push({
+          package_number: packageNumber,
+          fail_reason: error.message || '알 수 없는 오류'
+        });
+      }
+    }
+    
+    logger.info(`대량 추적 정보 조회 결과 - 성공: ${results.success_list.length}, 실패: ${results.fail_list.length}`);
+    
+    // API 응답 형식과 유사하게 결과 반환
+    return {
+      error: '',
+      message: '',
+      response: results,
+      request_id: uuidv4() // 요청 ID 생성
+    };
   }
   
   /**

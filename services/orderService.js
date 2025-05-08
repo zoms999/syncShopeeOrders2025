@@ -62,7 +62,7 @@ class OrderService {
 
       const now = new Date();
         const utcToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-        const utcYesterday = new Date(utcToday.getTime() - 48 * 60 * 60 * 1000);
+        const utcYesterday = new Date(utcToday.getTime() - 5 * 60 * 60 * 1000);
 
         const timeFrom = Math.floor(utcYesterday.getTime() / 1000); // 어제 0시
         const timeTo = Math.floor(utcToday.getTime() / 1000);        // 오늘 0시
