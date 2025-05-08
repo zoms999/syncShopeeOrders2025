@@ -57,109 +57,95 @@ class ShopeeApi {
   }
 
   /**
-   * API 호출 공통 함수
-   * @param {string} endpoint - API 엔드포인트
-   * @param {Object} data - 요청 데이터
-   * @param {string} accessToken - 액세스 토큰 (선택)
-   * @param {string} shopId - 샵 ID (선택)
-   * @param {string} method - HTTP 메소드 (기본: POST)
+   * API 호출 공통 메서드
+   * @param {string} path - API 경로
+   * @param {Object} params - 요청 파라미터
+   * @param {string} [method='GET'] - HTTP 메서드
    * @returns {Promise<Object>} - API 응답
+   * @private
    */
-  async _callApi(endpoint, data = {}, accessToken = '', shopId = '', method = 'POST') {
-    // V2 API 엔드포인트 경로 구성
-    const apiPath = endpoint.startsWith('/') ? endpoint : `/${endpoint}`;
-    const fullPath = `/api/v2${apiPath}`;
-    
-    const timestamp = this._getTimestamp();
-    const partnerId = parseInt(this.partnerId, 10);
-    const shopIdNum = shopId ? parseInt(shopId, 10) : 0;
-    
-    const signature = this._generateSignature(fullPath, timestamp, accessToken, shopIdNum ? String(shopIdNum) : '');
-    
-    const url = `${this.baseUrl}${fullPath}`;
-    logger.info(`API 호출: ${method} ${url}`);
-    
-    // 기본 공통 파라미터
-    const commonParams = {
-      partner_id: partnerId,
-      timestamp,
-      sign: signature
-    };
-    
-    if (accessToken) {
-      commonParams.access_token = accessToken;
-    }
-    
-    if (shopIdNum) {
-      commonParams.shop_id = shopIdNum;
-    }
-    
+  async _callApi(path, params, method = 'GET') {
     try {
-      let response;
+      // 기본 설정된 API 기본 URL 사용
+      const baseUrl = this.baseUrl;
+
+      // API 경로에 '/api/v2' 접두어가 없는 경우 추가
+      const apiPath = path.startsWith('/api/v2') ? path : `/api/v2${path}`;
+      const fullUrl = `${baseUrl}${apiPath}`;
       
-      if (method.toUpperCase() === 'GET') {
-        // GET 요청시 params로 전달 (URL 쿼리 파라미터)
-        const getParams = {
-          ...commonParams,
-          ...data
-        };
-        
-        logger.debug(`GET 요청 데이터:`, {
-          url,
-          params: getParams
-        });
-        
-        response = await axios.get(url, { 
-          params: getParams,
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
-      } else {
-        // POST 요청시에는 공통 매개변수를 URL 쿼리 파라미터로 전달하고, 
-        // 데이터는 요청 본문으로 전달
-        
-        logger.debug(`POST 요청 데이터:`, {
-          url,
-          params: commonParams,
-          body: data
-        });
-        
-        response = await axios.post(url, data, {
-          params: commonParams,  // URL 쿼리 파라미터로 전달
-          headers: {
-            'Content-Type': 'application/json'
-          }
-        });
-      }
+      // 요청 타임아웃 설정
+      const apiTimeout = 20000; // 20초 타임아웃 (충분한 여유)
       
-      const responseData = response.data;
+      // 공통 파라미터 추가
+      const timestamp = params.timestamp || this._getTimestamp();
+      const shopId = params.shop_id || '';
       
-      // 응답 로깅 (간략화)
-      logger.debug(`API 응답:`, {
-        status: response.status,
-        error: responseData.error || null,
-        requestId: responseData.request_id || null
-      });
+      // API 서명 생성
+      const signature = this._generateSignature(apiPath, timestamp, params.access_token || '', shopId ? String(shopId) : '');
       
-      // 공통 에러 체크
-      if (responseData.error) {
-        logger.error(`API 에러: ${responseData.error}, 메시지: ${responseData.message}`);
-        throw new Error(`API 에러: ${responseData.error}, 메시지: ${responseData.message}`);
-      }
-      
-      return responseData;
-    } catch (error) {
-      // 순환 참조 문제를 방지하기 위해 에러 정보 추출
-      const simplifiedError = {
-        message: error.message,
-        status: error.response?.status,
-        statusText: error.response?.statusText,
-        data: error.response?.data
+      // 공통 파라미터 설정
+      const commonParams = {
+        partner_id: parseInt(this.partnerId, 10),
+        timestamp,
+        sign: signature
       };
       
-      logger.error(`API 호출 실패 (${endpoint}):`, simplifiedError);
-      throw error; // 원본 에러를 그대로 던져 호출자가 처리할 수 있게 함
+      // 최종 파라미터 구성
+      const finalParams = {
+        ...commonParams,
+        ...params
+      };
+      
+      // 로깅 개선: 요청 URL 및 파라미터만 로깅 (민감한 정보 제외)
+      const logParams = { ...finalParams };
+      if (logParams.access_token) {
+        logParams.access_token = `${logParams.access_token.substring(0, 10)}...`;
+      }
+      
+      logger.debug(`API 요청: ${method} ${fullUrl}`, { params: logParams });
+      
+      // Axios 요청 설정
+      const config = {
+        method,
+        url: fullUrl,
+        timeout: apiTimeout,
+        headers: {
+          'Content-Type': 'application/json'
+        }
+      };
+      
+      // GET 요청은 params로 전달
+      if (method === 'GET') {
+        config.params = finalParams;
+      } else { // POST 요청은 data로 전달
+        config.data = params;
+        config.params = commonParams; // 공통 파라미터는 URL 쿼리로 전달
+      }
+      
+      // API 요청
+      const response = await axios(config);
+      
+      // 응답 로깅 (최소화)
+      logger.debug(`API 응답 상태: ${response.status} ${path}`);
+      
+      return response.data;
+    } catch (error) {
+      // 타임아웃, 네트워크 오류 등 상세 로깅
+      if (error.code === 'ECONNABORTED') {
+        logger.error(`API 요청 타임아웃: ${path}`);
+      } else if (error.response) {
+        logger.error(`API 오류 응답 (${path}):`, {
+          status: error.response.status,
+          data: error.response.data
+        });
+      } else {
+        logger.error(`API 요청 오류 (${path}):`, {
+          message: error.message,
+          code: error.code
+        });
+      }
+      
+      throw error;
     }
   }
   
@@ -201,6 +187,8 @@ class ShopeeApi {
     // API 필수 매개변수
     const requestParams = {
       // Shopee API 필수 매개변수
+      access_token: accessToken,
+      shop_id: shopId,
       time_range_field: params.time_range_field || 'create_time',
       time_from: params.time_from || Math.floor(Date.now() / 1000) - (30 * 60), // 기본 30분 전
       time_to: params.time_to || Math.floor(Date.now() / 1000),
@@ -222,7 +210,7 @@ class ShopeeApi {
     logger.info(`주문 목록 조회 요청 - 샵 ID: ${shopId}, 시간범위: ${requestParams.time_from} ~ ${requestParams.time_to}`);
     
     // get_order_list는 GET 메서드로 호출
-    return await this._callApi('/order/get_order_list', requestParams, accessToken, shopId, 'GET');
+    return await this._callApi('/order/get_order_list', requestParams, 'GET');
   }
   
   /**
@@ -238,6 +226,8 @@ class ShopeeApi {
     // 주문 상세 조회는 GET 메서드 사용 (Shopee API v2 문서 기준)
     // 모든 필요한 필드를 지정하여 응답에 포함되도록 함
     return await this._callApi('/order/get_order_detail', {
+      access_token: accessToken,
+      shop_id: shopId,
       order_sn_list: orderSns.join(','), // GET 요청에서는 배열이 아닌 쉼표로 구분된 문자열로 전달
       response_optional_fields: [
         'buyer_user_id', 'buyer_username', 'estimated_shipping_fee',
@@ -250,7 +240,7 @@ class ShopeeApi {
         'invoice_data', 'checkout_shipping_carrier', 'reverse_shipping_fee',
         'order_chargeable_weight', 'order_remark'
       ].join(',')
-    }, accessToken, shopId, 'GET');
+    }, 'GET');
   }
   
   /**
@@ -266,57 +256,85 @@ class ShopeeApi {
     // v2.order.get_shipment_list API 사용 (GET 메서드)
     // 페이지네이션을 위한 cursor 파라미터 지원
     return await this._callApi('/order/get_shipment_list', {
+      access_token: accessToken,
+      shop_id: shopId,
       page_size: 100,  // 최대 결과 개수
       cursor: cursor
-    }, accessToken, shopId, 'GET');
+    }, 'GET');
   }
   
   /**
-   * 주문 물류 추적 정보 가져오기
+   * 물류 추적 정보 조회
    * @param {string} accessToken - 액세스 토큰
-   * @param {string} shopId - 샵 ID
+   * @param {number} shopId - 샵 ID
    * @param {string} orderSn - 주문번호
-   * @param {string} packageNumber - 패키지 번호 (선택적)
-   * @returns {Promise<Object>} - 물류 추적 정보
+   * @param {string} packageNumber - 패키지 번호 (선택사항)
+   * @returns {Promise<Object>} - API 응답
    */
   async getTrackingInfo(accessToken, shopId, orderSn, packageNumber = null) {
-    logger.info(`물류 추적 정보 조회 요청 - 샵 ID: ${shopId}, 주문번호: ${orderSn}, 패키지번호: ${packageNumber || 'N/A'}`);
-    
-    // API 문서 기준 파라미터 설정
-    const params = {
-      order_sn: orderSn,
-      response_optional_fields: 'plp_number,first_mile_tracking_number,last_mile_tracking_number'
-    };
-    
-    // 패키지 번호가 있는 경우 추가
-    if (packageNumber) {
-      params.package_number = packageNumber;
-    }
-    
     try {
-      // 단일 주문의 추적 번호 조회
-      const response = await this._callApi('/logistics/get_tracking_number', 
-        params, 
-        accessToken, 
-        shopId, 
-        'GET'
-      );
+      // 특정 주문번호 디버그 로그 추가
+      const isSpecificOrder = (orderSn === '25042563TEG8YN');
+      if (isSpecificOrder) {
+        logger.info(`[디버그] ${orderSn} 송장번호 조회 API 시작 - 패키지번호: ${packageNumber || 'N/A'}`);
+      }
       
-      // 응답 성공 여부 로깅
-      if (response.response && response.response.tracking_number) {
-        logger.info(`주문 ${orderSn}의 송장번호 조회 성공: ${response.response.tracking_number}`);
-      } else {
-        logger.warn(`주문 ${orderSn}의 송장번호 조회 응답에 송장번호 없음`);
+      const path = '/api/v2/logistics/get_tracking_number';
+      const timestamp = Math.floor(Date.now() / 1000);
+      
+      // 기본 쿼리 파라미터 설정
+      const params = {
+        access_token: accessToken,
+        shop_id: shopId,
+        order_sn: orderSn,
+        timestamp: timestamp
+      };
+      
+      // 패키지 번호가 있는 경우에만 추가 (C# 코드와 유사하게 처리)
+      if (packageNumber) {
+        params.package_number = packageNumber;
+      }
+      
+      // 추가 필드 요청 (C# 코드와 동일하게 처리)
+      params.response_optional_fields = 'plp_number,first_mile_tracking_number,last_mile_tracking_number';
+      
+      // 디버그 로그 추가
+      if (isSpecificOrder) {
+        logger.info(`[디버그] ${orderSn} API 요청 파라미터:`, JSON.stringify(params));
+      }
+      
+      // API 호출 및 결과 반환
+      const response = await this._callApi(path, params);
+      
+      // 특정 주문번호에 대한 응답 상세 로깅
+      if (isSpecificOrder) {
+        logger.info(`[디버그] ${orderSn} API 응답:`, JSON.stringify(response));
+        
+        // 응답 구조 확인
+        const hasResponse = response && response.response;
+        const hasTrackingNumber = hasResponse && response.response.tracking_number;
+        logger.info(`[디버그] ${orderSn} 응답 구조 확인 - 응답 있음: ${hasResponse}, 송장번호 있음: ${hasTrackingNumber}`);
+        
+        if (hasResponse) {
+          // 쇼피 API 응답에 에러 코드가 있는지 확인
+          const errorCode = response.error;
+          const errorMsg = response.message || '';
+          if (errorCode) {
+            logger.error(`[디버그] ${orderSn} API 에러 - 코드: ${errorCode}, 메시지: ${errorMsg}`);
+          }
+          
+          // 송장번호가 있으면 확인
+          if (hasTrackingNumber) {
+            logger.info(`[디버그] ${orderSn} 송장번호 확인: ${response.response.tracking_number}`);
+          } else {
+            logger.warn(`[디버그] ${orderSn} 송장번호 없음 (API 응답에 tracking_number 필드 없음)`);
+          }
+        }
       }
       
       return response;
     } catch (error) {
-      // 오류 로깅 및 재던지기
-      logger.error(`물류 추적 정보 조회 요청 실패 (주문: ${orderSn}):`, {
-        message: error.message,
-        code: error.code,
-        status: error.response?.status
-      });
+      logger.error(`송장번호 조회 API 오류 (주문: ${orderSn}):`, error);
       throw error;
     }
   }
@@ -333,8 +351,10 @@ class ShopeeApi {
     
     // 추적 상세 정보 조회
     return await this._callApi('/logistics/get_tracking_info', {
+      access_token: accessToken,
+      shop_id: shopId,
       tracking_number: trackingNumber
-    }, accessToken, shopId, 'GET');
+    }, 'GET');
   }
   
   /**
@@ -349,8 +369,10 @@ class ShopeeApi {
     
     // 대량 추적 정보 조회
     return await this._callApi('/logistics/get_mass_tracking_number', {
+      access_token: accessToken,
+      shop_id: shopId,
       order_sn_list: orderSns.join(',')
-    }, accessToken, shopId, 'GET');
+    }, 'GET');
   }
   
   /**
