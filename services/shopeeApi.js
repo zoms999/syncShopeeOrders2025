@@ -276,16 +276,49 @@ class ShopeeApi {
    * @param {string} accessToken - 액세스 토큰
    * @param {string} shopId - 샵 ID
    * @param {string} orderSn - 주문번호
+   * @param {string} packageNumber - 패키지 번호 (선택적)
    * @returns {Promise<Object>} - 물류 추적 정보
    */
-  async getTrackingInfo(accessToken, shopId, orderSn) {
-    logger.info(`물류 추적 정보 조회 요청 - 샵 ID: ${shopId}, 주문번호: ${orderSn}`);
+  async getTrackingInfo(accessToken, shopId, orderSn, packageNumber = null) {
+    logger.info(`물류 추적 정보 조회 요청 - 샵 ID: ${shopId}, 주문번호: ${orderSn}, 패키지번호: ${packageNumber || 'N/A'}`);
     
-    // /logistics/tracking_number/get_mass 대신 올바른 엔드포인트 사용
-    // 단일 주문의 추적 번호 조회
-    return await this._callApi('/logistics/get_tracking_number', {
-      order_sn: orderSn
-    }, accessToken, shopId, 'GET');
+    // API 문서 기준 파라미터 설정
+    const params = {
+      order_sn: orderSn,
+      response_optional_fields: 'plp_number,first_mile_tracking_number,last_mile_tracking_number'
+    };
+    
+    // 패키지 번호가 있는 경우 추가
+    if (packageNumber) {
+      params.package_number = packageNumber;
+    }
+    
+    try {
+      // 단일 주문의 추적 번호 조회
+      const response = await this._callApi('/logistics/get_tracking_number', 
+        params, 
+        accessToken, 
+        shopId, 
+        'GET'
+      );
+      
+      // 응답 성공 여부 로깅
+      if (response.response && response.response.tracking_number) {
+        logger.info(`주문 ${orderSn}의 송장번호 조회 성공: ${response.response.tracking_number}`);
+      } else {
+        logger.warn(`주문 ${orderSn}의 송장번호 조회 응답에 송장번호 없음`);
+      }
+      
+      return response;
+    } catch (error) {
+      // 오류 로깅 및 재던지기
+      logger.error(`물류 추적 정보 조회 요청 실패 (주문: ${orderSn}):`, {
+        message: error.message,
+        code: error.code,
+        status: error.response?.status
+      });
+      throw error;
+    }
   }
   
   /**
