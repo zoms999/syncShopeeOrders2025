@@ -1,23 +1,29 @@
 {
-  "name": "shopee-order-collector",
+  "name": "shopee-order-system",
   "version": "1.0.0",
-  "description": "Shopee 주문 데이터 자동 수집 서비스",
+  "description": "쇼피 주문 데이터 수집 및 재고 관리 시스템",
   "main": "index.js",
   "scripts": {
-    "start": "node index.js",
-    "dev": "nodemon index.js",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "start": "cross-env API_PORT=3001 node index.js",
+    "dev": "cross-env API_PORT=3001 nodemon index.js",
+    "master": "cross-env API_PORT=3002 node master.js",
+    "worker": "node worker.js"
   },
   "dependencies": {
-    "axios": "^1.6.2",
-    "dotenv": "^16.3.1",
+    "axios": "^1.9.0",
+    "bull": "^4.10.4",
+    "cluster": "^0.7.7",
+    "dotenv": "^16.0.3",
+    "express": "^4.21.2",
+    "ioredis": "^5.3.2",
     "node-cron": "^3.0.2",
-    "pg-promise": "^11.5.4",
-    "uuid": "^9.0.1",
-    "winston": "^3.11.0",
-    "winston-daily-rotate-file": "^4.7.1"
+    "pg-promise": "^11.5.0",
+    "uuid": "^9.0.0",
+    "winston": "^3.8.2",
+    "winston-daily-rotate-file": "^5.0.0"
   },
   "devDependencies": {
-    "nodemon": "^3.0.1"
+    "cross-env": "^7.0.3",
+    "nodemon": "^2.0.22"
   }
-} 
+}

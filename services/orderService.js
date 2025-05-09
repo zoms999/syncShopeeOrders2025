@@ -61,11 +61,12 @@ class OrderService {
       //const timeTo = Math.floor(Date.now() / 1000);
 
       const now = new Date();
-        const utcToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
-        const utcYesterday = new Date(utcToday.getTime() - 5 * 60 * 60 * 1000);
+      const utcToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+      const utcTomorrow = new Date(utcToday.getTime() + 24 * 60 * 60 * 1000);
+      const utcYesterday = new Date(utcToday.getTime() - 5 * 60 * 60 * 1000);
 
-        const timeFrom = Math.floor(utcYesterday.getTime() / 1000); // 어제 0시
-        const timeTo = Math.floor(utcToday.getTime() / 1000);        // 오늘 0시
+      const timeFrom = Math.floor(utcYesterday.getTime() / 1000); // 어제 0시
+      const timeTo = Math.floor(utcTomorrow.getTime() / 1000);        // 오늘 0시
       
       // 특정 주문 처리 (송장번호 문제 디버깅/해결용)
       await this.processSpecificOrder(validShop);
@@ -165,6 +166,12 @@ class OrderService {
    * @param {Object} stats - 통계 객체
    */
   async _processOrderDetails(shop, orderSns, stats) {
+    // stats 객체에 orderSns 배열이 없으면 초기화
+    if (!stats.orderSns) {
+      stats.orderSns = [];
+      logger.debug('stats.orderSns 배열이 없어 초기화했습니다.');
+    }
+    
     // 배치 단위로 처리 (API 제한 고려)
     const batchSize = 50;
     
@@ -227,6 +234,13 @@ class OrderService {
                 shipping: shipmentMap[orderSn] || null,
                 items: formattedItems
               };
+              
+              // fulfillment_flag 처리 - 열거형 값으로 변환
+              if (formattedOrder.fulfillment_flag === 'fulfilled_by_cb_seller') {
+                formattedOrder.fulfillment_flag = 'SELLER';
+              } else if (formattedOrder.fulfillment_flag === 'fulfilled_by_shopee') {
+                formattedOrder.fulfillment_flag = 'SHOPEE';
+              }
               
               // 로그에 매핑된 데이터 상세 기록
               logger.debug(`주문 ${orderSn} 데이터 매핑 결과:`, {
@@ -343,10 +357,10 @@ class OrderService {
             // 물류 추적 정보 기본값 설정
             shipmentMap[shipmentOrder.order_sn] = {
               tracking_number: shipmentOrder.package_number,
-              shipping_carrier: null,
-              shipping_carrier_name: null,
-              estimated_shipping_fee: 0,
-              actual_shipping_cost: 0,
+              shipping_carrier: shipmentOrder.shipping_provider || null,
+              shipping_carrier_name: shipmentOrder.shipping_provider_name || shipmentOrder.shipping_provider || null,
+              estimated_shipping_fee: shipmentOrder.estimated_shipping_fee || 0,
+              actual_shipping_cost: shipmentOrder.actual_shipping_cost || 0,
               histories: []
             };
             
@@ -487,13 +501,17 @@ class OrderService {
             shipmentMap[orderSn] = {
               ...shipmentMap[orderSn],
               tracking_number: trackingNumber,
+              shipping_carrier: trackingInfo.shipping_provider || null,
+              shipping_carrier_name: trackingInfo.shipping_provider_name || trackingInfo.shipping_provider || null,
+              estimated_shipping_fee: trackingInfo.estimated_shipping_fee || 0,
+              actual_shipping_cost: trackingInfo.actual_shipping_cost || 0,
               first_mile_tracking_number: trackingInfo.first_mile_tracking_number || null,
               last_mile_tracking_number: trackingInfo.last_mile_tracking_number || null,
               plp_number: trackingInfo.plp_number || null
             };
             
             // 송장번호 로그 추가
-            logger.info(`송장번호 확인: 주문 ${orderSn}, 송장번호: ${trackingNumber}`);
+            logger.info(`송장번호 확인: 주문 ${orderSn}, 송장번호: ${trackingNumber}, 배송사: ${shipmentMap[orderSn].shipping_carrier_name || '없음'}`);
             
             // 이미 동일한 번호가 DB에 있는지 확인 (중복 업데이트 방지)
             if (currentTrackingNo !== trackingNumber) {

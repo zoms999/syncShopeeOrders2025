@@ -27,6 +27,30 @@ class ShopRepository {
   }
 
   /**
+   * 샵 ID로 샵 정보 조회
+   * @param {string} shopId - 샵 ID
+   * @returns {Promise<Object>} - 샵 정보
+   */
+  async getShopById(shopId) {
+    try {
+      const query = `
+        SELECT ss.* , cp.companyid 
+        FROM public.shopee_shop ss
+        JOIN public.company_platform cp ON ss.platform_id = cp.id
+        WHERE ss.shop_id = $1  AND ss.deleted IS NULL AND cp.isactive = true and cp.companyid ='ae2d37ac-b485-4051-919c-b970370e8dd9'
+        AND cp.platform = 'SHOPEE'
+        AND ss.deleted IS NULL
+      `;
+      
+      const shop = await db.oneOrNone(query, [shopId]);
+      return shop;
+    } catch (error) {
+      logger.error(`샵 ID ${shopId} 조회 실패:`, error);
+      throw error;
+    }
+  }
+
+  /**
    * 샵의 토큰 정보 업데이트
    * @param {string} shopId - 샵 ID
    * @param {Object} tokenInfo - 토큰 정보 객체

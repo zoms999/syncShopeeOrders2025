@@ -109,6 +109,34 @@ class OrderRepository {
     
     const orderId = existingOrder ? existingOrder.id : uuidv4();
     
+    // action_status 매핑 (C# enum ETomsOrderActionStatus에 해당)
+    // 기본값은 'ORDER'로 설정 (접수 상태)
+    let actionStatus = 'ORDER';
+    
+    // fulfillment_flag 매핑 (C# enum EShopeeFulfillmentFlag에 해당)
+    // 기본값은 'SELLER'로 설정 (fulfilled_by_cb_seller)
+    let fulfillmentFlag = 'SELLER';
+    
+    // order_status에 따라 action_status 결정
+    if (orderData.order_status === 'READY_TO_SHIP') {
+      actionStatus = 'READY_TO_PRINT';
+    } else if (orderData.order_status === 'SHIPPED') {
+      actionStatus = 'EXPORTED';
+    } else if (orderData.order_status === 'CANCELLED') {
+      actionStatus = 'REQUEST_CANCEL';
+    }
+    
+    // other_status 매핑 (C# enum ETomsOrderOtherStatus에 해당)
+    // 기본값은 'NONE'
+    const otherStatus = 'NONE';
+    
+    // fulfillment_flag 매핑 - 데이터베이스에 저장할 열거형 값으로 변환
+    if (orderData.fulfillment_flag === 'fulfilled_by_cb_seller') {
+      fulfillmentFlag = 'SELLER';
+    } else if (orderData.fulfillment_flag === 'fulfilled_by_shopee') {
+      fulfillmentFlag = 'SHOPEE';
+    }
+    
     const query = `
       INSERT INTO public.toms_shopee_order (
         id, platform, order_num, status, action_status, other_status,
@@ -143,8 +171,8 @@ class OrderRepository {
       orderId,
       orderData.order_sn,
       orderData.order_status,
-      null, // action_status
-      null, // other_status
+      actionStatus, // action_status
+      otherStatus, // other_status
       orderData.region || 'KR',
       orderData.currency || 'KRW',
       orderData.create_time ? new Date(orderData.create_time * 1000) : null,
@@ -159,7 +187,7 @@ class OrderRepository {
       null, // print_at
       orderData.cancel_by || null,
       orderData.cancel_reason || null,
-      null, // fulfillment_flag
+      fulfillmentFlag, // fulfillment_flag
       orderData.message_to_seller || null
     ];
     
@@ -209,7 +237,7 @@ class OrderRepository {
     
     const params = [
       logisticId,
-      logisticData.shipping_carrier || null,
+      logisticData.shipping_carrier_name || logisticData.shipping_carrier || null,
       logisticData.tracking_number || null,
       parseFloat(logisticData.estimated_shipping_fee || 0),
       parseFloat(logisticData.actual_shipping_cost || 0),
@@ -221,7 +249,7 @@ class OrderRepository {
       logger.debug(`배송 정보 저장 성공 (ID: ${result.id})`);
       
       // 송장번호 저장 확인 로그 추가
-      logger.info(`배송 정보 저장 완료 - 주문 ID: ${orderId}, 송장번호: ${logisticData.tracking_number || '없음'}`);
+      logger.info(`배송 정보 저장 완료 - 주문 ID: ${orderId}, 송장번호: ${logisticData.tracking_number || '없음'}, 배송사: ${logisticData.shipping_carrier_name || logisticData.shipping_carrier || '없음'}`);
       
       return result.id;
     } catch (error) {
@@ -422,6 +450,54 @@ class OrderRepository {
     }
     
     return results;
+  }
+
+  /**
+   * 주문 상세 정보 조회 (스토어드 프로시저 사용)
+   * @param {string|null} orderId - 주문 ID (UUID)
+   * @param {string|null} orderNum - 주문 번호
+   * @param {string} platform - 플랫폼 (기본값: 'shopee')
+   * @returns {Promise<Object>} - 주문 상세 정보
+   */
+  async getOrderDetail(orderId = null, orderNum = null, platform = 'shopee') {
+    try {
+      // 최소한 하나의 식별자가 필요
+      if (!orderId && !orderNum) {
+        throw new Error('주문 ID 또는 주문 번호를 제공해야 합니다.');
+      }
+      
+      // 스토어드 프로시저 호출
+      const query = `
+        SELECT * FROM public.get_order_detail(
+          p_order_id := $1,
+          p_order_num := $2,
+          p_platform := $3
+        )
+      `;
+      
+      const result = await db.oneOrNone(query, [orderId, orderNum, platform]);
+      
+      if (!result) {
+        logger.warn(`주문 정보를 찾을 수 없습니다: ID=${orderId || 'NULL'}, 번호=${orderNum || 'NULL'}, 플랫폼=${platform}`);
+        return null;
+      }
+      
+      // 아이템 상세 정보는 JSONB로 반환되므로 필요시 파싱
+      if (result.item_details) {
+        // 이미 JSON 객체로 변환되어 있을 수 있음
+        if (typeof result.item_details === 'string') {
+          result.item_details = JSON.parse(result.item_details);
+        }
+      } else {
+        result.item_details = [];
+      }
+      
+      logger.debug(`주문 상세 정보 조회 성공: ${orderNum || orderId}`);
+      return result;
+    } catch (error) {
+      logger.error(`주문 상세 정보 조회 실패:`, error);
+      throw error;
+    }
   }
 }
 
