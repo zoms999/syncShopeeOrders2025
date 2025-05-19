@@ -27,14 +27,15 @@ module.exports = {
   shopee: {
     apiUrl: process.env.SHOPEE_API_URL || 'https://partner.shopeemobile.com/api/v2',
     partnerId: process.env.SHOPEE_PARTNER_ID || '846699',
-    partnerKey: process.env.SHOPEE_PARTNER_KEY || '4b474b776956466853504f584166537975734a77457253696644527a66786469'
-
-    // apiUrl: process.env.SHOPEE_API_URL || 'https://partner.test-stable.shopeemobile.com/api/v2',
-    // partnerId: process.env.SHOPEE_PARTNER_ID || '845287',
-    // partnerKey: process.env.SHOPEE_PARTNER_KEY || '5ae2984701425c51b55677af960865033de58383eca67eebcc0b9399719cd474'
+    partnerKey: process.env.SHOPEE_PARTNER_KEY || '4b474b776956466853504f584166537975734a77457253696644527a66786469',
+    isSandbox: process.env.SHOPEE_IS_SANDBOX === 'false' || false
+    //apiUrl: process.env.SHOPEE_API_URL || 'https://partner.test-stable.shopeemobile.com/api/v2',
+    //partnerId: process.env.SHOPEE_PARTNER_ID || '845287',
+    //partnerKey: process.env.SHOPEE_PARTNER_KEY || '5ae2984701425c51b55677af960865033de58383eca67eebcc0b9399719cd474',
+    //isSandbox: process.env.SHOPEE_IS_SANDBOX === 'true' || true  // 샌드박스 모드 설정 (기본값: true)
   },
   scheduler: {
-    cronExpression: process.env.CRON_EXPRESSION || '*/5 * * * *',
+    cronExpression: process.env.CRON_EXPRESSION || '*/10 * * * *',
     maxRetryCount: parseInt(process.env.MAX_RETRY_COUNT || '3'),
     batchSize: parseInt(process.env.ORDER_BATCH_SIZE || '50'),
     concurrency: parseInt(process.env.JOB_CONCURRENCY || '5')

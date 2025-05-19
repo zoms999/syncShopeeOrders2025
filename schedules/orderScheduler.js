@@ -23,7 +23,7 @@ class OrderScheduler {
       return;
     }
     
-    logger.info(`주문 수집 스케줄러 시작 (cron: ${this.cronExpression})`);
+    logger.info(`주문 수집 스케줄러 시작 (cron: ${this.cronExpression}, 샌드박스 모드: ${config.shopee.isSandbox})`);
     
     // 주문 수집 작업 스케줄링
     this.cronJob = cron.schedule(this.cronExpression, async () => {
@@ -36,16 +36,16 @@ class OrderScheduler {
       this.isRunning = true;
       
       try {
-        // 활성화된 쇼피 샵 목록 조회
-        const shops = await shopRepository.getActiveShops();
+        // 활성화된 쇼피 샵 목록 조회 (샌드박스 설정 적용)
+        const shops = await shopRepository.getActiveShops(config.shopee.isSandbox);
         
         if (!shops || shops.length === 0) {
-          logger.info('활성화된 쇼피 샵이 없습니다.');
+          logger.info(`활성화된 쇼피 샵이 없습니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
           this.isRunning = false;
           return;
         }
         
-        logger.info(`활성화된 쇼피 샵 ${shops.length}개에 대한 주문 수집 시작`);
+        logger.info(`활성화된 쇼피 샵 ${shops.length}개에 대한 주문 수집 시작 (샌드박스 모드: ${config.shopee.isSandbox})`);
         
         // 분산 처리를 위해 Bull 큐에 작업 추가
         if (config.cluster.enabled) {
@@ -73,13 +73,13 @@ class OrderScheduler {
    */
   async _initialRun() {
     try {
-      logger.info('초기 주문 수집 작업 시작');
+      logger.info(`초기 주문 수집 작업 시작 (샌드박스 모드: ${config.shopee.isSandbox})`);
       
-      // 활성화된 쇼피 샵 목록 조회
-      const shops = await shopRepository.getActiveShops();
+      // 활성화된 쇼피 샵 목록 조회 (샌드박스 설정 적용)
+      const shops = await shopRepository.getActiveShops(config.shopee.isSandbox);
       
       if (!shops || shops.length === 0) {
-        logger.info('활성화된 쇼피 샵이 없습니다.');
+        logger.info(`활성화된 쇼피 샵이 없습니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
         return;
       }
       
@@ -191,12 +191,12 @@ class OrderScheduler {
    */
   async runForShop(shopId) {
     try {
-      // 해당 샵 정보 조회
-      const shops = await shopRepository.getActiveShops();
+      // 해당 샵 정보 조회 (샌드박스 설정 적용)
+      const shops = await shopRepository.getActiveShops(config.shopee.isSandbox);
       const shop = shops.find(s => s.shop_id === shopId);
       
       if (!shop) {
-        logger.error(`샵 ID ${shopId}을 찾을 수 없습니다.`);
+        logger.error(`샵 ID ${shopId}을 찾을 수 없습니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
         return { success: false, error: '샵을 찾을 수 없음' };
       }
       

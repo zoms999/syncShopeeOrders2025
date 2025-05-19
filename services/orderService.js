@@ -31,10 +31,10 @@ class OrderService {
 
       // DB에서 직접 샵 정보를 조회
       const query = `
-        SELECT ss.*, cp.id as platform_id, cp.companyid 
+        SELECT ss.*, cp.id as platform_id, cp.companyid, cp.issandbox 
         FROM public.shopee_shop ss
         JOIN public.company_platform cp ON ss.platform_id = cp.id
-        WHERE ss.id = $1 AND ss.deleted IS NULL AND cp.isactive = true and cp.companyid ='ae2d37ac-b485-4051-919c-b970370e8dd9'
+        WHERE ss.id = $1 AND ss.deleted IS NULL AND cp.isactive = true 
       `;
       
       let validShop;
@@ -52,6 +52,10 @@ class OrderService {
       
       // company_id 확인 (디버깅용)
       logger.debug(`샵 ID ${shop.shop_id}의 company_id: ${validShop.companyid}`);
+
+      // 샌드박스 모드 설정 (회사 설정 기준)
+      shopeeApi.isSandbox = validShop.issandbox === true;
+      logger.info(`샵 ID ${shop.shop_id}의 샌드박스 모드: ${shopeeApi.isSandbox}`);
 
       // 샵의 주문 수집 단위(분) 확인
       //const minutesToCollect = validShop.order_update_minute || 60;
@@ -822,6 +826,10 @@ class OrderService {
       }
       
       logger.info(`[디버그] ${specificOrderSn} 주문 상태: ${orderResult.status || 'NULL'}, 액션 상태: ${orderResult.action_status || 'NULL'}`);
+      
+      // 샌드박스 모드 설정 (회사 설정 기준)
+      shopeeApi.isSandbox = shop.issandbox === true;
+      logger.info(`[디버그] ${specificOrderSn} 처리를 위한 샌드박스 모드: ${shopeeApi.isSandbox}`);
       
       // 2. 직접 API 호출로
       try {

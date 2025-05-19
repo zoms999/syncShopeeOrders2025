@@ -10,11 +10,14 @@ class ShopeeApi {
     this.apiUrl = config.shopee.apiUrl;
     this.partnerId = config.shopee.partnerId;
     this.partnerKey = config.shopee.partnerKey;
+    this.isSandbox = config.shopee.isSandbox;
     
-    // API 기본 URL 설정 - 프로덕션 서버 사용
-    this.baseUrl = 'https://partner.shopeemobile.com';
+    // API 기본 URL 설정 - 샌드박스 여부에 따라 결정
+    this.baseUrl = this.isSandbox 
+      ? 'https://partner.test-stable.shopeemobile.com' 
+      : 'https://partner.shopeemobile.com';
     
-    logger.info(`Shopee API 초기화 - 기본 URL: ${this.baseUrl}, Partner ID: ${this.partnerId}`);
+    logger.info(`Shopee API 초기화 - 기본 URL: ${this.baseUrl}, Partner ID: ${this.partnerId}, 샌드박스 모드: ${this.isSandbox}`);
   }
 
   /**
@@ -69,12 +72,14 @@ class ShopeeApi {
    */
   async _callApi(path, params, accessToken, shopId, method = 'GET') {
     try {
-      // 기본 설정된 API 기본 URL 사용
-      const baseUrl = this.baseUrl;
-
+      // 샌드박스 모드에 따라 API URL 재설정
+      this.baseUrl = this.isSandbox 
+        ? 'https://partner.test-stable.shopeemobile.com' 
+        : 'https://partner.shopeemobile.com';
+      
       // API 경로에 '/api/v2' 접두어가 없는 경우 추가
       const apiPath = path.startsWith('/api/v2') ? path : `/api/v2${path}`;
-      const fullUrl = `${baseUrl}${apiPath}`;
+      const fullUrl = `${this.baseUrl}${apiPath}`;
       
       // 요청 타임아웃 설정
       const apiTimeout = 30000; // 30초 타임아웃 (충분한 여유)
@@ -202,6 +207,7 @@ class ShopeeApi {
       
       // 선택적 매개변수
       order_status: params.order_status || null,
+      //order_status:  'READY_TO_SHIP',
       response_optional_fields: params.response_optional_fields || 'order_status'
     };
     

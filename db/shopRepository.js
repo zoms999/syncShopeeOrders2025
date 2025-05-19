@@ -4,24 +4,26 @@ const logger = require('../utils/logger');
 class ShopRepository {
   /**
    * order_update_minute가 설정된 활성화된 쇼피 샵 목록 조회
+   * @param {boolean} isSandbox - 샌드박스 모드 여부 (기본값: true)
    * @returns {Promise<Array>} - 활성 쇼피 샵 목록
    */
-  async getActiveShops() {
+  async getActiveShops(isSandbox = true) {
     try {
       const query = `
-        SELECT ss.* 
+        SELECT ss.*, cp.companyid, cp.issandbox  
         FROM public.shopee_shop ss
         JOIN public.company_platform cp ON ss.platform_id = cp.id
         WHERE cp.isactive = true
         AND ss.order_update_minute IS NOT NULL
         AND ss.deleted IS NULL
         AND cp.platform = 'SHOPEE'
+        AND cp.issandbox = $1
         ORDER BY ss.shop_id
       `;
       
-      return await db.any(query);
+      return await db.any(query, [isSandbox]);
     } catch (error) {
-      logger.error('활성화된 쇼피 샵 조회 실패:', error);
+      logger.error(`활성화된 쇼피 샵 조회 실패 (샌드박스 모드: ${isSandbox}):`, error);
       throw error;
     }
   }
@@ -34,10 +36,10 @@ class ShopRepository {
   async getShopById(shopId) {
     try {
       const query = `
-        SELECT ss.* , cp.companyid 
+        SELECT ss.* , cp.companyid, cp.issandbox 
         FROM public.shopee_shop ss
         JOIN public.company_platform cp ON ss.platform_id = cp.id
-        WHERE ss.shop_id = $1  AND ss.deleted IS NULL AND cp.isactive = true and cp.companyid ='ae2d37ac-b485-4051-919c-b970370e8dd9'
+        WHERE ss.shop_id = $1  AND ss.deleted IS NULL AND cp.isactive = true 
         AND cp.platform = 'SHOPEE'
         AND ss.deleted IS NULL
       `;

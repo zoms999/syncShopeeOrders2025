@@ -52,7 +52,7 @@ class Worker {
       this.status = 'processing-orders';
       this.reportStatus();
       
-      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId} 주문 수집 작업 시작 ${manual ? '(수동)' : ''}`);
+      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId} 주문 수집 작업 시작 ${manual ? '(수동)' : ''} (샌드박스 모드: ${config.shopee.isSandbox})`);
       
       // 샵 정보 조회
       let shop;
@@ -64,23 +64,23 @@ class Worker {
           // 샵을 찾을 수 없는 경우 활성 샵 목록에서 찾기
           if (!shop) {
             logger.warn(`샵 ID ${shopId}를 getShopById로 찾을 수 없어 활성 샵 목록에서 검색합니다.`);
-            const activeShops = await shopRepository.getActiveShops();
+            const activeShops = await shopRepository.getActiveShops(config.shopee.isSandbox);
             shop = activeShops.find(s => s.shop_id === shopId || s.shop_id.toString() === shopId.toString());
           }
           
           if (!shop) {
-            throw new Error(`샵 ID ${shopId}를 찾을 수 없습니다.`);
+            throw new Error(`샵 ID ${shopId}를 찾을 수 없습니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
           }
         } catch (error) {
           logger.error(`getShopById 메서드 실행 중 오류:`, error);
           
           // getShopById 메서드 실패 시 활성 샵 목록에서 찾기
-          logger.info(`활성 샵 목록에서 샵 ID ${shopId}를 검색합니다.`);
-          const activeShops = await shopRepository.getActiveShops();
+          logger.info(`활성 샵 목록에서 샵 ID ${shopId}를 검색합니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
+          const activeShops = await shopRepository.getActiveShops(config.shopee.isSandbox);
           shop = activeShops.find(s => s.shop_id === shopId || s.shop_id.toString() === shopId.toString());
           
           if (!shop) {
-            throw new Error(`샵 ID ${shopId}를 찾을 수 없습니다.`);
+            throw new Error(`샵 ID ${shopId}를 찾을 수 없습니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
           }
         }
         
@@ -112,9 +112,9 @@ class Worker {
         }
       } else {
         // 모든 활성 샵 처리
-        const shops = await shopRepository.getActiveShops();
+        const shops = await shopRepository.getActiveShops(config.shopee.isSandbox);
         
-        logger.info(`워커 ${this.workerId}: 활성화된 샵 ${shops.length}개 주문 수집 시작`);
+        logger.info(`워커 ${this.workerId}: 활성화된 샵 ${shops.length}개 주문 수집 시작 (샌드박스 모드: ${config.shopee.isSandbox})`);
         
         // 각 샵에 대해 별도의 작업 추가
         for (const shop of shops) {
@@ -129,7 +129,7 @@ class Worker {
           );
         }
         
-        logger.info(`워커 ${this.workerId}: ${shops.length}개 샵의 주문 수집 작업이 큐에 추가되었습니다.`);
+        logger.info(`워커 ${this.workerId}: ${shops.length}개 샵의 주문 수집 작업이 큐에 추가되었습니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
       }
       
       return { success: true };
@@ -154,7 +154,7 @@ class Worker {
       this.status = 'processing-details';
       this.reportStatus();
       
-      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId}의 주문 세부 정보 처리 시작 (${orderSns.length}개)`);
+      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId}의 주문 세부 정보 처리 시작 (${orderSns.length}개) (샌드박스 모드: ${config.shopee.isSandbox})`);
       
       // 샵 정보 조회
       let shop;
@@ -164,20 +164,20 @@ class Worker {
         // 샵을 찾을 수 없는 경우 활성 샵 목록에서 찾기
         if (!shop) {
           logger.warn(`샵 ID ${shopId}를 getShopById로 찾을 수 없어 활성 샵 목록에서 검색합니다.`);
-          const activeShops = await shopRepository.getActiveShops();
+          const activeShops = await shopRepository.getActiveShops(config.shopee.isSandbox);
           shop = activeShops.find(s => s.shop_id === shopId || s.shop_id.toString() === shopId.toString());
         }
       } catch (error) {
         logger.error(`getShopById 메서드 실행 중 오류:`, error);
         
         // getShopById 메서드 실패 시 활성 샵 목록에서 찾기
-        logger.info(`활성 샵 목록에서 샵 ID ${shopId}를 검색합니다.`);
-        const activeShops = await shopRepository.getActiveShops();
+        logger.info(`활성 샵 목록에서 샵 ID ${shopId}를 검색합니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
+        const activeShops = await shopRepository.getActiveShops(config.shopee.isSandbox);
         shop = activeShops.find(s => s.shop_id === shopId || s.shop_id.toString() === shopId.toString());
       }
       
       if (!shop) {
-        throw new Error(`샵 ID ${shopId}를 찾을 수 없습니다.`);
+        throw new Error(`샵 ID ${shopId}를 찾을 수 없습니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
       }
       
       // 주문 세부 정보 처리
@@ -218,7 +218,7 @@ class Worker {
       this.status = 'processing-shipment';
       this.reportStatus();
       
-      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId}의 배송 정보 처리 시작 (${orderSns.length}개)`);
+      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId}의 배송 정보 처리 시작 (${orderSns.length}개) (샌드박스 모드: ${config.shopee.isSandbox})`);
       
       // 샵 정보 조회
       let shop;
@@ -228,20 +228,20 @@ class Worker {
         // 샵을 찾을 수 없는 경우 활성 샵 목록에서 찾기
         if (!shop) {
           logger.warn(`샵 ID ${shopId}를 getShopById로 찾을 수 없어 활성 샵 목록에서 검색합니다.`);
-          const activeShops = await shopRepository.getActiveShops();
+          const activeShops = await shopRepository.getActiveShops(config.shopee.isSandbox);
           shop = activeShops.find(s => s.shop_id === shopId || s.shop_id.toString() === shopId.toString());
         }
       } catch (error) {
         logger.error(`getShopById 메서드 실행 중 오류:`, error);
         
         // getShopById 메서드 실패 시 활성 샵 목록에서 찾기
-        logger.info(`활성 샵 목록에서 샵 ID ${shopId}를 검색합니다.`);
-        const activeShops = await shopRepository.getActiveShops();
+        logger.info(`활성 샵 목록에서 샵 ID ${shopId}를 검색합니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
+        const activeShops = await shopRepository.getActiveShops(config.shopee.isSandbox);
         shop = activeShops.find(s => s.shop_id === shopId || s.shop_id.toString() === shopId.toString());
       }
       
       if (!shop) {
-        throw new Error(`샵 ID ${shopId}를 찾을 수 없습니다.`);
+        throw new Error(`샵 ID ${shopId}를 찾을 수 없습니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
       }
       
       // 빈 배송 정보 맵 생성
@@ -253,7 +253,7 @@ class Worker {
       // 송장번호 정보 저장
       await orderService._saveTrackingNumbers(shop, Object.values(shipmentMap));
       
-      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId}의 배송 정보 처리 완료`);
+      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId}의 배송 정보 처리 완료 (샌드박스 모드: ${config.shopee.isSandbox})`);
       
       // 재고 업데이트 작업 추가
       await inventoryQueue.add(
@@ -287,7 +287,7 @@ class Worker {
       this.status = 'updating-inventory';
       this.reportStatus();
       
-      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId}의 재고 업데이트 시작 (주문 ${orderSns.length}개)`);
+      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId}의 재고 업데이트 시작 (주문 ${orderSns.length}개) (샌드박스 모드: ${config.shopee.isSandbox})`);
       
       // 샵 정보 조회
       let shop;
@@ -297,26 +297,26 @@ class Worker {
         // 샵을 찾을 수 없는 경우 활성 샵 목록에서 찾기
         if (!shop) {
           logger.warn(`샵 ID ${shopId}를 getShopById로 찾을 수 없어 활성 샵 목록에서 검색합니다.`);
-          const activeShops = await shopRepository.getActiveShops();
+          const activeShops = await shopRepository.getActiveShops(config.shopee.isSandbox);
           shop = activeShops.find(s => s.shop_id === shopId || s.shop_id.toString() === shopId.toString());
         }
       } catch (error) {
         logger.error(`getShopById 메서드 실행 중 오류:`, error);
         
         // getShopById 메서드 실패 시 활성 샵 목록에서 찾기
-        logger.info(`활성 샵 목록에서 샵 ID ${shopId}를 검색합니다.`);
-        const activeShops = await shopRepository.getActiveShops();
+        logger.info(`활성 샵 목록에서 샵 ID ${shopId}를 검색합니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
+        const activeShops = await shopRepository.getActiveShops(config.shopee.isSandbox);
         shop = activeShops.find(s => s.shop_id === shopId || s.shop_id.toString() === shopId.toString());
       }
       
       if (!shop) {
-        throw new Error(`샵 ID ${shopId}를 찾을 수 없습니다.`);
+        throw new Error(`샵 ID ${shopId}를 찾을 수 없습니다 (샌드박스 모드: ${config.shopee.isSandbox}).`);
       }
       
       // TODO: 재고 업데이트 로직 구현
       // 주문에서 구매된 상품 정보 가져와서 재고 차감 처리
       
-      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId}의 재고 업데이트 완료`);
+      logger.info(`워커 ${this.workerId}: 샵 ID ${shopId}의 재고 업데이트 완료 (샌드박스 모드: ${config.shopee.isSandbox})`);
       
       return { success: true };
     } catch (error) {
@@ -371,10 +371,10 @@ class Worker {
       );
       
       // 재고 업데이트 작업 처리기
-      inventoryQueue.process('update-inventory',
-        config.scheduler.concurrency,
-        this.processInventoryUpdate.bind(this)
-      );
+      // inventoryQueue.process('update-inventory',
+      //   config.scheduler.concurrency,
+      //   this.processInventoryUpdate.bind(this)
+      // );
       
       // 상태 보고 설정
       this.setupStatusReporting();
