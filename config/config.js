@@ -35,7 +35,7 @@ module.exports = {
     //isSandbox: process.env.SHOPEE_IS_SANDBOX === 'true' || true  // 샌드박스 모드 설정 (기본값: true)
   },
   scheduler: {
-    cronExpression: process.env.CRON_EXPRESSION || '*/10 * * * *',
+    cronExpression: process.env.CRON_EXPRESSION || '*/20 * * * *',
     maxRetryCount: parseInt(process.env.MAX_RETRY_COUNT || '3'),
     batchSize: parseInt(process.env.ORDER_BATCH_SIZE || '50'),
     concurrency: parseInt(process.env.JOB_CONCURRENCY || '5')

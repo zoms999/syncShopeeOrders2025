@@ -67,13 +67,13 @@ class OrderService {
       const now = new Date();
       const utcToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
       const utcTomorrow = new Date(utcToday.getTime() + 24 * 60 * 60 * 1000);
-      const utcYesterday = new Date(utcToday.getTime() - 5 * 60 * 60 * 1000);
+      const utcYesterday = new Date(utcToday.getTime() - 2 * 60 * 60 * 1000);
 
       const timeFrom = Math.floor(utcYesterday.getTime() / 1000); // 어제 0시
       const timeTo = Math.floor(utcTomorrow.getTime() / 1000);        // 오늘 0시
       
       // 특정 주문 처리 (송장번호 문제 디버깅/해결용)
-      await this.processSpecificOrder(validShop);
+      //await this.processSpecificOrder(validShop);
       
       // 주문 데이터 수집 시작
       while (retryCount <= MAX_RETRY) {
