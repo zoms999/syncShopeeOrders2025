@@ -255,26 +255,6 @@ class ShopeeApi {
   }
   
   /**
-   * 배송 정보 가져오기
-   * @param {string} accessToken - 액세스 토큰
-   * @param {string} shopId - 샵 ID
-   * @param {string} cursor - 페이지네이션 커서 (선택적)
-   * @returns {Promise<Object>} - 배송 정보
-   */
-  async getShipmentList(accessToken, shopId, cursor = "") {
-    logger.info(`배송 정보 조회 요청 - 샵 ID: ${shopId}, 커서: ${cursor}`);
-    
-    // v2.order.get_shipment_list API 사용 (GET 메서드)
-    // 페이지네이션을 위한 cursor 파라미터 지원
-    return await this._callApi('/order/get_shipment_list', {
-      access_token: accessToken,
-      shop_id: shopId,
-      page_size: 100,  // 최대 결과 개수
-      cursor: cursor
-    }, accessToken, shopId, 'GET');
-  }
-  
-  /**
    * 물류 추적 정보 조회
    * @param {string} accessToken - 액세스 토큰
    * @param {number} shopId - 샵 ID

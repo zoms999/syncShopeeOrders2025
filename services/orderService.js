@@ -67,7 +67,7 @@ class OrderService {
       const now = new Date();
       const utcToday = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
       const utcTomorrow = new Date(utcToday.getTime() + 24 * 60 * 60 * 1000);
-      const utcYesterday = new Date(utcToday.getTime() - 2 * 60 * 60 * 1000);
+      const utcYesterday = new Date(utcToday.getTime() - 1 * 60 * 60 * 1000);
 
       const timeFrom = Math.floor(utcYesterday.getTime() / 1000); // 어제 0시
       const timeTo = Math.floor(utcTomorrow.getTime() / 1000);        // 오늘 0시
@@ -208,8 +208,8 @@ class OrderService {
         const orderDetails = orderDetailResponse.response.order_list;
         logger.info(`샵 ID ${shop.shop_id}의 주문 상세 정보 ${orderDetails.length}개 조회 성공`);
         
-        // 배송 정보 조회 (모든 페이지)
-        const shipmentMap = await this._fetchAllShipmentInfo(shop);
+        // 배송 정보는 개별 주문 처리 시 getTrackingInfo API로 조회
+        const shipmentMap = {};
         
         // 각 주문 처리 (트랜잭션 추가)
         for (const orderDetail of orderDetails) {
@@ -235,7 +235,7 @@ class OrderService {
               // 주문 데이터 포맷팅
               const formattedOrder = {
                 ...orderDetail,
-                shipping: shipmentMap[orderSn] || null,
+                shipping: this._extractShippingInfo(orderDetail, orderSn),
                 items: formattedItems
               };
               
@@ -313,104 +313,6 @@ class OrderService {
   }
   
   /**
-   * 모든 배송 정보 가져오기 (페이지네이션 처리)
-   * @private
-   * @param {Object} shop - 샵 정보
-   * @returns {Promise<Object>} - 주문번호를 키로 하는 배송 정보 맵
-   */
-  async _fetchAllShipmentInfo(shop) {
-    const shipmentMap = {};
-    let hasMore = true;
-    let cursor = "";
-    let totalShipments = 0;
-    const batchSize = 50; // API 호출 최적화를 위한 배치 크기
-    const orderSnBatches = []; // 배치 처리를 위한 주문번호 배열
-    
-    // 모든 주문 송장번호 처리를 위한 변수
-    let processedOrderCount = 0;
-    let updatedOrderCount = 0;
-    
-    logger.info(`[개선] 모든 주문의 송장번호 처리 시작 - 샵 ID: ${shop.shop_id}`);
-    
-    // 모든 페이지의 배송 정보 조회
-    while (hasMore) {
-      try {
-        // 배송 정보 조회
-        const shipmentResponse = await shopeeApi.getShipmentList(
-          shop.access_token,
-          shop.shop_id,
-          cursor
-        );
-        
-        if (!shipmentResponse.response) {
-          logger.warn(`샵 ID ${shop.shop_id}의 배송 정보 응답 없음`);
-          break;
-        }
-        
-        // 배송 정보 처리
-        if (shipmentResponse.response.order_list && shipmentResponse.response.order_list.length > 0) {
-          const shipmentOrders = shipmentResponse.response.order_list;
-          totalShipments += shipmentOrders.length;
-          
-          // 현재 페이지의 주문번호 확인
-          const orderSnsInPage = shipmentOrders.map(order => order.order_sn);
-          logger.info(`[개선] 배송 정보 페이지 주문번호 수: ${orderSnsInPage.length}`);
-          
-          // 기본 배송 정보 매핑 생성
-          for (const shipmentOrder of shipmentOrders) {
-            // 물류 추적 정보 기본값 설정
-            shipmentMap[shipmentOrder.order_sn] = {
-              tracking_number: shipmentOrder.package_number,
-              shipping_carrier: shipmentOrder.shipping_provider || null,
-              shipping_carrier_name: shipmentOrder.shipping_provider_name || shipmentOrder.shipping_provider || null,
-              estimated_shipping_fee: shipmentOrder.estimated_shipping_fee || 0,
-              actual_shipping_cost: shipmentOrder.actual_shipping_cost || 0,
-              histories: []
-            };
-            
-            // 배치 처리를 위해 주문번호 저장
-            orderSnBatches.push(shipmentOrder.order_sn);
-          }
-          
-          // 배치 크기 단위로 대량 추적 정보 가져오기
-          if (orderSnBatches.length >= batchSize || !shipmentResponse.response.more) {
-            // 처리 결과 받기
-            const result = await this._processTrackingInfoBatch(shop, orderSnBatches, shipmentMap);
-            processedOrderCount += result.processed;
-            updatedOrderCount += result.updated;
-            
-            orderSnBatches.length = 0; // 배열 비우기
-          }
-        }
-        
-        // 다음 페이지 확인
-        hasMore = shipmentResponse.response.more === true;
-        if (hasMore) {
-          cursor = shipmentResponse.response.next_cursor;
-          logger.debug(`샵 ID ${shop.shop_id}의 배송 정보 다음 페이지 조회 (커서: ${cursor})`);
-        }
-      } catch (error) {
-        logger.error(`샵 ID ${shop.shop_id}의 배송 정보 조회 실패: ${error.message}`);
-        break;
-      }
-    }
-    
-    // 남은 주문에 대한 추적 정보 처리
-    if (orderSnBatches.length > 0) {
-      const result = await this._processTrackingInfoBatch(shop, orderSnBatches, shipmentMap);
-      processedOrderCount += result.processed;
-      updatedOrderCount += result.updated;
-    }
-    
-    logger.info(`샵 ID ${shop.shop_id}의 배송 정보 총계: 조회=${totalShipments}개, 처리=${processedOrderCount}개, 업데이트=${updatedOrderCount}개`);
-    
-    // 미업데이트 송장번호가 있는 주문 검색 (추가 처리)
-    await this._processUnupdatedTrackingNumbers(shop);
-    
-    return shipmentMap;
-  }
-  
-  /**
    * 배치 방식으로 주문 추적 정보 처리
    * @private
    * @param {Object} shop - 샵 정보
@@ -436,9 +338,17 @@ class OrderService {
     // 모든 주문에 대해 개별적으로 조회
     for (let i = 0; i < orderSns.length; i++) {
       const orderSn = orderSns[i];
+      
+      // shipmentMap에 없으면 빈 객체로 초기화
       if (!shipmentMap[orderSn]) {
-        logger.warn(`[개선] 주문번호 ${orderSn}는 shipmentMap에 없어 처리를 건너뜁니다.`);
-        continue;
+        shipmentMap[orderSn] = {
+          tracking_number: null,
+          shipping_carrier: null,
+          shipping_carrier_name: null,
+          estimated_shipping_fee: 0,
+          actual_shipping_cost: 0,
+          histories: []
+        };
       }
       
       try {
@@ -494,19 +404,38 @@ class OrderService {
         if (trackingResponse && trackingResponse.response) {
           const trackingInfo = trackingResponse.response;
           
+          // 배송사 명 관련 필드 디버그 로그 추가
+          logger.debug(`주문 ${orderSn} API 응답 필드 확인:`, {
+            shipping_provider: trackingInfo.shipping_provider || null,
+            shipping_provider_name: trackingInfo.shipping_provider_name || null,
+            logistic_name: trackingInfo.logistic_name || null,
+            carrier_name: trackingInfo.carrier_name || null,
+            carrier: trackingInfo.carrier || null,
+            logistics_channel: trackingInfo.logistics_channel || null,
+            logistics_status: trackingInfo.logistics_status || null
+          });
+          
           // 송장번호 확인 - 다양한 필드에서 시도
           const trackingNumber = trackingInfo.tracking_number || 
                                 trackingInfo.first_mile_tracking_number || 
                                 trackingInfo.last_mile_tracking_number || 
                                 trackingInfo.plp_number;
           
+          // 배송사 명 추출
+          const carrierName = trackingInfo.shipping_provider_name || 
+                             trackingInfo.logistic_name || 
+                             trackingInfo.carrier_name || 
+                             trackingInfo.shipping_provider || 
+                             trackingInfo.carrier || 
+                             trackingInfo.logistics_channel || null;
+          
           // 배송 정보 업데이트
           if (trackingNumber) {
             shipmentMap[orderSn] = {
               ...shipmentMap[orderSn],
               tracking_number: trackingNumber,
-              shipping_carrier: trackingInfo.shipping_provider || null,
-              shipping_carrier_name: trackingInfo.shipping_provider_name || trackingInfo.shipping_provider || null,
+              shipping_carrier: trackingInfo.shipping_provider || trackingInfo.logistic_name || trackingInfo.carrier_name || trackingInfo.carrier || trackingInfo.logistics_channel || null,
+              shipping_carrier_name: trackingInfo.shipping_provider_name || trackingInfo.logistic_name || trackingInfo.carrier_name || trackingInfo.shipping_provider || trackingInfo.carrier || trackingInfo.logistics_channel || null,
               estimated_shipping_fee: trackingInfo.estimated_shipping_fee || 0,
               actual_shipping_cost: trackingInfo.actual_shipping_cost || 0,
               first_mile_tracking_number: trackingInfo.first_mile_tracking_number || null,
@@ -519,11 +448,23 @@ class OrderService {
             
             // 이미 동일한 번호가 DB에 있는지 확인 (중복 업데이트 방지)
             if (currentTrackingNo !== trackingNumber) {
+              // 필수 필드 검증
+              if (!orderSn || !orderId || !trackingNumber) {
+                logger.error(`송장번호 업데이트 대상 추가 실패 - 필수 필드 누락:`, {
+                  orderSn: orderSn || 'NULL',
+                  orderId: orderId || 'NULL', 
+                  trackingNumber: trackingNumber || 'NULL'
+                });
+                failCount++;
+                continue;
+              }
+              
               successCount++;
               updatedOrders.push({ 
-                orderSn, 
-                orderId,
-                trackingNumber
+                orderSn: orderSn, 
+                orderId: orderId,
+                trackingNumber: trackingNumber,
+                carrierName: shipmentMap[orderSn].shipping_carrier_name
               });
               
               logger.info(`송장번호 DB 업데이트 예정: 주문 ${orderSn}, 송장번호: ${trackingNumber}`);
@@ -619,6 +560,30 @@ class OrderService {
     
     for (const order of updatedOrders) {
       try {
+        // 필수 필드 검증
+        if (!order.orderSn) {
+          logger.error(`송장번호 저장 실패: 주문번호(orderSn)가 없습니다. 데이터:`, order);
+          continue;
+        }
+        
+        if (!order.orderId) {
+          logger.error(`주문 ${order.orderSn}의 송장번호 저장 실패: 주문 ID(orderId)가 없습니다. 데이터:`, order);
+          continue;
+        }
+        
+        if (!order.trackingNumber) {
+          logger.error(`주문 ${order.orderSn}의 송장번호 저장 실패: 송장번호(trackingNumber)가 없습니다. 데이터:`, order);
+          continue;
+        }
+        
+        // 디버그용 로그 추가
+        logger.debug(`주문 ${order.orderSn} 송장번호 저장 시작`, {
+          orderSn: order.orderSn,
+          orderId: order.orderId,
+          trackingNumber: order.trackingNumber,
+          carrierName: order.carrierName || 'NULL'
+        });
+        
         // 트랜잭션으로 처리
         await db.tx('save-tracking-tx', async tx => {
           // 물류 정보 확인
@@ -632,23 +597,25 @@ class OrderService {
             await tx.none(
               `UPDATE public.toms_shopee_logistic SET 
                 tracking_no = $1, 
+                name = $2,
                 updated_at = CURRENT_TIMESTAMP 
-              WHERE id = $2`,
-              [order.trackingNumber, logisticResult.id]
+              WHERE id = $3`,
+              [order.trackingNumber, order.carrierName || null, logisticResult.id]
             );
             
             logger.debug(`주문 ${order.orderSn}의 기존 물류 정보 업데이트 (물류 ID: ${logisticResult.id})`);
           } else {
-            // 물류 정보 신규 생성
+            // 물류 정보 신규 생성 - UUID 생성 추가
+            const newLogisticId = uuidv4();
             await tx.none(
               `INSERT INTO public.toms_shopee_logistic 
-                (toms_order_id, tracking_no, created_at, updated_at) 
+                (id, toms_order_id, tracking_no, name, platform, created_at, updated_at) 
               VALUES 
-                ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-              [order.orderId, order.trackingNumber]
+                ($1, $2, $3, $4, 'shopee', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+              [newLogisticId, order.orderId, order.trackingNumber, order.carrierName || null]
             );
             
-            logger.debug(`주문 ${order.orderSn}의 물류 정보 신규 생성`);
+            logger.debug(`주문 ${order.orderSn}의 물류 정보 신규 생성 (물류 ID: ${newLogisticId})`);
           }
           
           // 주문 아이템 업데이트
@@ -685,7 +652,10 @@ class OrderService {
         savedCount++;
         
       } catch (error) {
-        logger.error(`주문 ${order.orderSn}의 송장번호 DB 저장 실패: ${error.message}`);
+        logger.error(`주문 ${order.orderSn || 'UNKNOWN'}의 송장번호 DB 저장 실패: ${error.message}`, {
+          orderData: order,
+          errorStack: error.stack
+        });
       }
     }
     
@@ -756,13 +726,32 @@ class OrderService {
                               trackingInfo.last_mile_tracking_number || 
                               trackingInfo.plp_number;
               
+              // 배송사 명 추출
+              const carrierName = trackingInfo.shipping_provider_name || 
+                                 trackingInfo.logistic_name || 
+                                 trackingInfo.carrier_name || 
+                                 trackingInfo.shipping_provider || 
+                                 trackingInfo.carrier || 
+                                 trackingInfo.logistics_channel || null;
+              
               if (trackingNumber) {
                 logger.info(`[개선] 주문 ${order.order_num}의 누락된 송장번호 찾음: ${trackingNumber}`);
+                
+                // 필수 필드 검증
+                if (!order.order_num || !order.id || !trackingNumber) {
+                  logger.error(`[개선] 미업데이트 주문 추가 실패 - 필수 필드 누락:`, {
+                    orderSn: order.order_num || 'NULL',
+                    orderId: order.id || 'NULL',
+                    trackingNumber: trackingNumber || 'NULL'
+                  });
+                  continue;
+                }
                 
                 updatedOrders.push({
                   orderSn: order.order_num,
                   orderId: order.id,
-                  trackingNumber: trackingNumber
+                  trackingNumber: trackingNumber,
+                  carrierName: carrierName
                 });
               } else {
                 logger.warn(`[개선] 주문 ${order.order_num}의 송장번호를 API에서 찾을 수 없음`);
@@ -771,10 +760,20 @@ class OrderService {
                 if (order.status === 'SHIPPED') {
                   logger.info(`[개선] 발송 상태인 주문 ${order.order_num}의 주문번호를 송장번호로 사용`);
                   
+                  // 필수 필드 검증
+                  if (!order.order_num || !order.id) {
+                    logger.error(`[개선] 미업데이트 주문 추가 실패 - 필수 필드 누락:`, {
+                      orderSn: order.order_num || 'NULL',
+                      orderId: order.id || 'NULL'
+                    });
+                    continue;
+                  }
+                  
                   updatedOrders.push({
                     orderSn: order.order_num,
                     orderId: order.id,
-                    trackingNumber: order.order_num // 주문번호를 송장번호로
+                    trackingNumber: order.order_num, // 주문번호를 송장번호로
+                    carrierName: null
                   });
                 }
               }
@@ -852,14 +851,35 @@ class OrderService {
         if (trackingResponse && trackingResponse.response) {
           const trackingInfo = trackingResponse.response;
           
-          // 주요 송장번호 필드 체크
-          trackingNumber = trackingInfo.tracking_number || 
-                          trackingInfo.first_mile_tracking_number || 
-                          trackingInfo.last_mile_tracking_number || 
-                          trackingInfo.plp_number;
+          // 배송사 명 관련 필드 디버그 로그 추가
+          logger.debug(`주문 ${specificOrderSn} API 응답 필드 확인:`, {
+            shipping_provider: trackingInfo.shipping_provider || null,
+            shipping_provider_name: trackingInfo.shipping_provider_name || null,
+            logistic_name: trackingInfo.logistic_name || null,
+            carrier_name: trackingInfo.carrier_name || null,
+            carrier: trackingInfo.carrier || null,
+            logistics_channel: trackingInfo.logistics_channel || null,
+            logistics_status: trackingInfo.logistics_status || null
+          });
+          
+          // 송장번호 확인 - 다양한 필드에서 시도
+          const trackingNumber = trackingInfo.tracking_number || 
+                                trackingInfo.first_mile_tracking_number || 
+                                trackingInfo.last_mile_tracking_number || 
+                                trackingInfo.plp_number;
+          
+          // 배송사 명 추출
+          const carrierName = trackingInfo.shipping_provider_name || 
+                             trackingInfo.logistic_name || 
+                             trackingInfo.carrier_name || 
+                             trackingInfo.shipping_provider || 
+                             trackingInfo.carrier || 
+                             trackingInfo.logistics_channel || null;
           
           if (trackingNumber) {
-            logger.info(`[디버그] ${specificOrderSn} 송장번호 찾음: ${trackingNumber}`);
+            logger.info(`[디버그] ${specificOrderSn} 송장번호 찾음: ${trackingNumber}, 배송사: ${carrierName || '없음'}`);
+            // carrierName을 orderResult에 저장
+            orderResult.carrierName = carrierName;
           } else {
             logger.warn(`[디버그] ${specificOrderSn} API에서 송장번호를 찾을 수 없음`);
           }
@@ -876,6 +896,16 @@ class OrderService {
         
         // 5. 송장번호 DB 저장
         if (trackingNumber) {
+          // 필수 필드 검증
+          if (!specificOrderSn || !orderResult.id || !trackingNumber) {
+            logger.error(`[디버그] ${specificOrderSn} 송장번호 저장 실패 - 필수 필드 누락:`, {
+              orderSn: specificOrderSn || 'NULL',
+              orderId: orderResult.id || 'NULL',
+              trackingNumber: trackingNumber || 'NULL'
+            });
+            return;
+          }
+          
           // 트랜잭션으로 처리
           await db.tx('save-specific-tracking', async tx => {
             // 물류 정보 확인
@@ -889,23 +919,25 @@ class OrderService {
               await tx.none(
                 `UPDATE public.toms_shopee_logistic SET 
                   tracking_no = $1, 
+                  name = $2,
                   updated_at = CURRENT_TIMESTAMP 
-                WHERE id = $2`,
-                [trackingNumber, logisticResult.id]
+                WHERE id = $3`,
+                [trackingNumber, orderResult.carrierName || null, logisticResult.id]
               );
               
               logger.info(`[디버그] ${specificOrderSn} 기존 물류 정보 업데이트 (물류 ID: ${logisticResult.id})`);
             } else {
-              // 물류 정보 신규 생성
+              // 물류 정보 신규 생성 - UUID 생성 추가
+              const newLogisticId = uuidv4();
               await tx.none(
                 `INSERT INTO public.toms_shopee_logistic 
-                  (toms_order_id, tracking_no, created_at, updated_at) 
+                  (id, toms_order_id, tracking_no, name, platform, created_at, updated_at) 
                 VALUES 
-                  ($1, $2, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
-                [orderResult.id, trackingNumber]
+                  ($1, $2, $3, $4, 'shopee', CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)`,
+                [newLogisticId, orderResult.id, trackingNumber, orderResult.carrierName || null]
               );
               
-              logger.info(`[디버그] ${specificOrderSn} 물류 정보 신규 생성`);
+              logger.info(`[디버그] ${specificOrderSn} 물류 정보 신규 생성 (물류 ID: ${newLogisticId})`);
             }
             
             // 주문 아이템 업데이트
@@ -929,7 +961,7 @@ class OrderService {
                 ['SHIPPED', orderResult.id]
               );
               
-              logger.info(`[디버그] ${specificOrderSn} 주문 상태를 'SHIPPED'로 업데이트`);
+              logger.debug(`주문 ${specificOrderSn} 주문 상태를 'SHIPPED'로 업데이트`);
             }
           });
           
@@ -967,6 +999,86 @@ class OrderService {
     }
     
     logger.info(`[디버그] 특정 주문번호 ${specificOrderSn} 수동 처리 완료`);
+  }
+
+  /**
+   * 주문 상세 정보에서 배송 정보 추출
+   * @private
+   * @param {Object} orderDetail - 주문 상세 정보
+   * @param {string} orderSn - 주문번호
+   * @returns {Object|null} - 배송 정보 객체
+   */
+  _extractShippingInfo(orderDetail, orderSn) {
+    try {
+      // 디버그용 - API 응답에서 배송사 관련 필드들 확인
+      logger.debug(`주문 ${orderSn}: API 응답 배송사 필드 확인`, {
+        shipping_carrier: orderDetail.shipping_carrier || null,
+        checkout_shipping_carrier: orderDetail.checkout_shipping_carrier || null,
+        package_list_length: orderDetail.package_list ? orderDetail.package_list.length : 0,
+        first_package_shipping_carrier: orderDetail.package_list && orderDetail.package_list[0] ? orderDetail.package_list[0].shipping_carrier : null
+      });
+      
+      // 배송사 정보 추출 우선순위:
+      // 1. package_list[].shipping_carrier (패키지별 배송사 - 가장 구체적)
+      // 2. shipping_carrier (주문 레벨 배송사)
+      // 3. checkout_shipping_carrier (체크아웃 시 선택한 배송사)
+      
+      let shippingCarrier = null;
+      let shippingCarrierName = null;
+      let trackingNumber = null;
+      
+      // 1. 패키지 리스트에서 배송사 정보 확인 (가장 구체적)
+      if (orderDetail.package_list && orderDetail.package_list.length > 0) {
+        const firstPackage = orderDetail.package_list[0];
+        shippingCarrier = firstPackage.shipping_carrier || null;
+        shippingCarrierName = firstPackage.shipping_carrier || null;
+        trackingNumber = firstPackage.package_number || null;
+        
+        if (shippingCarrierName) {
+          logger.info(`주문 ${orderSn}: 패키지에서 배송사 정보 추출 성공 - ${shippingCarrierName}`);
+        } else {
+          logger.debug(`주문 ${orderSn}: 패키지에서 배송사 정보 없음`);
+        }
+      }
+      
+      // 2. 주문 레벨에서 배송사 정보 확인 (패키지 정보가 없는 경우)
+      if (!shippingCarrier && orderDetail.shipping_carrier) {
+        shippingCarrier = orderDetail.shipping_carrier;
+        shippingCarrierName = orderDetail.shipping_carrier;
+        
+        logger.info(`주문 ${orderSn}: 주문 레벨에서 배송사 정보 추출 성공 - ${shippingCarrierName}`);
+      }
+      
+      // 3. 체크아웃 배송사 정보 확인 (대안)
+      if (!shippingCarrier && orderDetail.checkout_shipping_carrier) {
+        shippingCarrier = orderDetail.checkout_shipping_carrier;
+        shippingCarrierName = orderDetail.checkout_shipping_carrier;
+        
+        logger.info(`주문 ${orderSn}: 체크아웃에서 배송사 정보 추출 성공 - ${shippingCarrierName}`);
+      }
+      
+      // 배송 정보 객체 생성
+      const shippingInfo = {
+        shipping_carrier: shippingCarrier,
+        shipping_carrier_name: shippingCarrierName,
+        tracking_number: trackingNumber,
+        estimated_shipping_fee: parseFloat(orderDetail.estimated_shipping_fee || 0),
+        actual_shipping_cost: parseFloat(orderDetail.actual_shipping_fee || 0),
+        histories: []
+      };
+      
+      // 최종 결과 로그
+      if (shippingCarrierName) {
+        logger.info(`주문 ${orderSn}: 배송사 정보 추출 완료 - 배송사: ${shippingCarrierName}, 송장번호: ${trackingNumber || '없음'}`);
+      } else {
+        logger.warn(`주문 ${orderSn}: 모든 소스에서 배송사 정보를 찾을 수 없음`);
+      }
+      
+      return shippingInfo;
+    } catch (error) {
+      logger.error(`주문 ${orderSn}: 배송 정보 추출 중 오류 - ${error.message}`);
+      return null;
+    }
   }
 }
 
