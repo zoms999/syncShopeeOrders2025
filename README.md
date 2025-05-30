@@ -1,6 +1,59 @@
-# 쇼피 주문 동기화 시스템
+# Shopee Order Sync System 2025
 
-쇼피(Shopee) 플랫폼의 주문 데이터를 수집하고 재고를 관리하는 분산 처리 시스템입니다.
+쇼피 주문 동기화 시스템입니다.
+
+## 🚀 설정 방법
+
+### 1. 설정 파일 생성
+```bash
+# config.js.example을 복사하여 config.js 생성
+cp config/config.js.example config/config.js
+```
+
+### 2. config.js 파일 수정
+```javascript
+// config/config.js
+module.exports = {
+  db: {
+    host: 'your-database-host',
+    port: 5432,
+    database: 'your-database-name',
+    user: 'your-database-user',
+    password: 'your-database-password'
+  },
+  shopee: {
+    partnerId: 'your-partner-id',
+    partnerKey: 'your-partner-key',
+    isSandbox: false  // 프로덕션: false, 테스트: true
+  },
+  supabase: {
+    url: 'your-supabase-url',
+    anonKey: 'your-supabase-anon-key'
+  }
+}
+```
+
+### 3. 환경변수 설정 (선택사항)
+`.env` 파일을 생성하여 환경변수로도 설정 가능합니다:
+```env
+DB_HOST=your-database-host
+DB_PASSWORD=your-database-password
+SHOPEE_PARTNER_ID=your-partner-id
+SHOPEE_PARTNER_KEY=your-partner-key
+```
+
+## 📋 주요 기능
+
+- 쇼피 주문 데이터 자동 수집
+- 송장번호 및 배송사 정보 통합 관리
+- 불완전한 물류 정보 자동 보완
+- 중복 데이터 방지
+
+## ⚠️ 보안 주의사항
+
+- `config/config.js` 파일은 **절대 Git에 커밋하지 마세요**
+- 민감한 정보는 환경변수를 사용하세요
+- API 키와 데이터베이스 패스워드는 안전하게 관리하세요
 
 ## 시스템 아키텍처
 
