@@ -111,6 +111,13 @@ class OrderService {
           // 주문 세부 정보 및 배송 정보 수집 및 저장
           await this._processOrderDetails(validShop, orderSns, stats);
           
+          // 불완전한 물류 정보 보완 (송장번호 또는 배송사 정보 누락 해결)
+          try {
+            await this.fixIncompleteLogisticInfo(validShop);
+          } catch (fixError) {
+            logger.warn(`샵 ID ${validShop.shop_id}의 물류 정보 보완 중 오류 (계속 진행): ${fixError.message}`);
+          }
+          
           // 성공 처리 후 반복 종료
           break;
         } catch (error) {
@@ -593,17 +600,28 @@ class OrderService {
           );
           
           if (logisticResult && logisticResult.id) {
-            // 기존 물류 정보 업데이트
+            // 기존 물류 정보에서 name 값 조회
+            const existingLogistic = await tx.oneOrNone(
+              `SELECT name FROM public.toms_shopee_logistic WHERE id = $1`,
+              [logisticResult.id]
+            );
+            
+            // 기존 name이 있으면 유지, 없으면 새로 설정
+            const finalCarrierName = existingLogistic && existingLogistic.name 
+              ? existingLogistic.name 
+              : (order.carrierName || null);
+            
+            // 기존 물류 정보 업데이트 (name 보존)
             await tx.none(
               `UPDATE public.toms_shopee_logistic SET 
                 tracking_no = $1, 
                 name = $2,
                 updated_at = CURRENT_TIMESTAMP 
               WHERE id = $3`,
-              [order.trackingNumber, order.carrierName || null, logisticResult.id]
+              [order.trackingNumber, finalCarrierName, logisticResult.id]
             );
             
-            logger.debug(`주문 ${order.orderSn}의 기존 물류 정보 업데이트 (물류 ID: ${logisticResult.id})`);
+            logger.debug(`주문 ${order.orderSn}의 기존 물류 정보 업데이트 (물류 ID: ${logisticResult.id}, 기존 name: ${existingLogistic?.name || 'NULL'}, 최종 name: ${finalCarrierName})`);
           } else {
             // 물류 정보 신규 생성 - UUID 생성 추가
             const newLogisticId = uuidv4();
@@ -915,17 +933,28 @@ class OrderService {
             );
             
             if (logisticResult) {
-              // 기존 물류 정보 업데이트
+              // 기존 물류 정보에서 name 값 조회
+              const existingLogistic = await tx.oneOrNone(
+                `SELECT name FROM public.toms_shopee_logistic WHERE id = $1`,
+                [logisticResult.id]
+              );
+              
+              // 기존 name이 있으면 유지, 없으면 새로 설정
+              const finalCarrierName = existingLogistic && existingLogistic.name 
+                ? existingLogistic.name 
+                : (orderResult.carrierName || null);
+              
+              // 기존 물류 정보 업데이트 (name 보존)
               await tx.none(
                 `UPDATE public.toms_shopee_logistic SET 
                   tracking_no = $1, 
                   name = $2,
                   updated_at = CURRENT_TIMESTAMP 
                 WHERE id = $3`,
-                [trackingNumber, orderResult.carrierName || null, logisticResult.id]
+                [trackingNumber, finalCarrierName, logisticResult.id]
               );
               
-              logger.info(`[디버그] ${specificOrderSn} 기존 물류 정보 업데이트 (물류 ID: ${logisticResult.id})`);
+              logger.debug(`주문 ${specificOrderSn}의 기존 물류 정보 업데이트 (물류 ID: ${logisticResult.id}, 기존 name: ${existingLogistic?.name || 'NULL'}, 최종 name: ${finalCarrierName})`);
             } else {
               // 물류 정보 신규 생성 - UUID 생성 추가
               const newLogisticId = uuidv4();
@@ -937,7 +966,7 @@ class OrderService {
                 [newLogisticId, orderResult.id, trackingNumber, orderResult.carrierName || null]
               );
               
-              logger.info(`[디버그] ${specificOrderSn} 물류 정보 신규 생성 (물류 ID: ${newLogisticId})`);
+              logger.debug(`주문 ${specificOrderSn}의 물류 정보 신규 생성 (물류 ID: ${newLogisticId})`);
             }
             
             // 주문 아이템 업데이트
@@ -949,7 +978,7 @@ class OrderService {
               [trackingNumber, orderResult.id]
             );
             
-            logger.info(`[디버그] ${specificOrderSn} 주문 아이템 업데이트: ${updateItemsResult.rowCount}개 행 영향 받음`);
+            logger.info(`주문 ${specificOrderSn} 주문 아이템 업데이트: ${updateItemsResult.rowCount}개 행 영향 받음`);
             
             // 주문 상태 업데이트 (필요시) - status 필드 사용
             if (orderResult.status !== 'SHIPPED' && orderResult.status !== 'COMPLETED') {
@@ -1032,13 +1061,17 @@ class OrderService {
         const firstPackage = orderDetail.package_list[0];
         shippingCarrier = firstPackage.shipping_carrier || null;
         shippingCarrierName = firstPackage.shipping_carrier || null;
-        trackingNumber = firstPackage.package_number || null;
+        // 주의: get_order_detail API에서는 실제 tracking_number가 제공되지 않음
+        // package_number는 패키지 식별자이지 송장번호가 아님
+        trackingNumber = null; // get_tracking_number API에서 별도로 조회해야 함
         
         if (shippingCarrierName) {
           logger.info(`주문 ${orderSn}: 패키지에서 배송사 정보 추출 성공 - ${shippingCarrierName}`);
         } else {
           logger.debug(`주문 ${orderSn}: 패키지에서 배송사 정보 없음`);
         }
+        
+        logger.debug(`주문 ${orderSn}: 패키지 번호 ${firstPackage.package_number || '없음'} (송장번호 아님, 패키지 식별자임)`);
       }
       
       // 2. 주문 레벨에서 배송사 정보 확인 (패키지 정보가 없는 경우)
@@ -1078,6 +1111,136 @@ class OrderService {
     } catch (error) {
       logger.error(`주문 ${orderSn}: 배송 정보 추출 중 오류 - ${error.message}`);
       return null;
+    }
+  }
+
+  /**
+   * 불완전한 물류 정보 보완 (송장번호 또는 배송사 정보 누락 해결)
+   * @param {Object} shop - 샵 정보
+   * @returns {Promise<void>}
+   */
+  async fixIncompleteLogisticInfo(shop) {
+    logger.info(`[보완] 불완전한 물류 정보 보완 시작 - 샵 ID: ${shop.shop_id}`);
+    
+    try {
+      // 1. 송장번호는 있지만 배송사 정보가 없는 레코드 조회
+      const missingCarrierRecords = await db.manyOrNone(
+        `SELECT l.id, l.toms_order_id, l.tracking_no, o.order_num
+         FROM public.toms_shopee_logistic l
+         JOIN public.toms_shopee_order o ON l.toms_order_id = o.id
+         WHERE l.tracking_no IS NOT NULL 
+         AND l.tracking_no != ''
+         AND (l.name IS NULL OR l.name = '')
+         AND o.platform = 'shopee'
+         AND o.shop_id = $1`,
+        [shop.shop_id]
+      );
+      
+      // 2. 배송사 정보는 있지만 송장번호가 없는 레코드 조회
+      const missingTrackingRecords = await db.manyOrNone(
+        `SELECT l.id, l.toms_order_id, l.name, o.order_num
+         FROM public.toms_shopee_logistic l
+         JOIN public.toms_shopee_order o ON l.toms_order_id = o.id
+         WHERE l.name IS NOT NULL 
+         AND l.name != ''
+         AND (l.tracking_no IS NULL OR l.tracking_no = '')
+         AND o.platform = 'shopee'
+         AND o.shop_id = $1`,
+        [shop.shop_id]
+      );
+      
+      logger.info(`[보완] 송장번호 있지만 배송사 정보 없음: ${missingCarrierRecords.length}개`);
+      logger.info(`[보완] 배송사 정보 있지만 송장번호 없음: ${missingTrackingRecords.length}개`);
+      
+      let fixedCount = 0;
+      
+      // 3. 송장번호는 있지만 배송사 정보가 없는 경우 - get_order_detail API로 배송사 정보 조회
+      for (const record of missingCarrierRecords.slice(0, 20)) { // 최대 20개씩 처리
+        try {
+          const orderDetailResponse = await shopeeApi.getOrderDetail(
+            shop.access_token,
+            shop.shop_id,
+            [record.order_num]
+          );
+          
+          if (orderDetailResponse.response && orderDetailResponse.response.order_list && orderDetailResponse.response.order_list.length > 0) {
+            const orderDetail = orderDetailResponse.response.order_list[0];
+            const shippingInfo = this._extractShippingInfo(orderDetail, record.order_num);
+            
+            if (shippingInfo && shippingInfo.shipping_carrier_name) {
+              // 배송사 정보 업데이트
+              await db.none(
+                `UPDATE public.toms_shopee_logistic SET 
+                  name = $1, 
+                  updated_at = CURRENT_TIMESTAMP 
+                WHERE id = $2`,
+                [shippingInfo.shipping_carrier_name, record.id]
+              );
+              
+              logger.info(`[보완] 주문 ${record.order_num}: 배송사 정보 추가 (${shippingInfo.shipping_carrier_name})`);
+              fixedCount++;
+            }
+          }
+          
+          // API 제한 고려
+          await new Promise(resolve => setTimeout(resolve, 300));
+        } catch (error) {
+          logger.error(`[보완] 주문 ${record.order_num}의 배송사 정보 조회 실패: ${error.message}`);
+        }
+      }
+      
+      // 4. 배송사 정보는 있지만 송장번호가 없는 경우 - get_tracking_number API로 송장번호 조회
+      for (const record of missingTrackingRecords.slice(0, 20)) { // 최대 20개씩 처리
+        try {
+          const trackingResponse = await shopeeApi.getTrackingInfo(
+            shop.access_token,
+            shop.shop_id,
+            record.order_num,
+            null
+          );
+          
+          if (trackingResponse && trackingResponse.response) {
+            const trackingInfo = trackingResponse.response;
+            const trackingNumber = trackingInfo.tracking_number || 
+                                  trackingInfo.first_mile_tracking_number || 
+                                  trackingInfo.last_mile_tracking_number || 
+                                  trackingInfo.plp_number;
+            
+            if (trackingNumber) {
+              // 송장번호 업데이트
+              await db.none(
+                `UPDATE public.toms_shopee_logistic SET 
+                  tracking_no = $1, 
+                  updated_at = CURRENT_TIMESTAMP 
+                WHERE id = $2`,
+                [trackingNumber, record.id]
+              );
+              
+              // 주문 아이템도 함께 업데이트
+              await db.none(
+                `UPDATE public.toms_shopee_order_item SET 
+                  tracking_no = $1, 
+                  updated_at = CURRENT_TIMESTAMP 
+                WHERE toms_order_id = $2`,
+                [trackingNumber, record.toms_order_id]
+              );
+              
+              logger.info(`[보완] 주문 ${record.order_num}: 송장번호 추가 (${trackingNumber})`);
+              fixedCount++;
+            }
+          }
+          
+          // API 제한 고려
+          await new Promise(resolve => setTimeout(resolve, 300));
+        } catch (error) {
+          logger.error(`[보완] 주문 ${record.order_num}의 송장번호 조회 실패: ${error.message}`);
+        }
+      }
+      
+      logger.info(`[보완] 불완전한 물류 정보 보완 완료 - 수정된 레코드: ${fixedCount}개`);
+      
+    } catch (error) {
+      logger.error(`[보완] 불완전한 물류 정보 보완 중 오류: ${error.message}`);
     }
   }
 }

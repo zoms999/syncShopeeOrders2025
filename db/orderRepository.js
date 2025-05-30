@@ -227,10 +227,10 @@ class OrderRepository {
         'shopee', $6, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP
       )
       ON CONFLICT (toms_order_id) DO UPDATE SET
-        name = $2,
-        tracking_no = $3,
-        estimated_shipping_fee = $4,
-        actual_shipping_cost = $5,
+        name = COALESCE(NULLIF(EXCLUDED.name, ''), NULLIF(toms_shopee_logistic.name, ''), EXCLUDED.name),
+        tracking_no = COALESCE(NULLIF(EXCLUDED.tracking_no, ''), NULLIF(toms_shopee_logistic.tracking_no, ''), EXCLUDED.tracking_no),
+        estimated_shipping_fee = COALESCE(EXCLUDED.estimated_shipping_fee, toms_shopee_logistic.estimated_shipping_fee),
+        actual_shipping_cost = COALESCE(EXCLUDED.actual_shipping_cost, toms_shopee_logistic.actual_shipping_cost),
         updated_at = CURRENT_TIMESTAMP
       RETURNING id
     `;
